@@ -29,6 +29,7 @@ class Config:
     ssd_penalty: float = 10.0     # ruptures PELT penalty；須 TEP 掃描定值，勿硬信此預設
     transition_width: int = 10    # 換線/維修後 settling 段長度（排除於 golden-A baseline）
     cpd_min_size: int = 12        # ruptures 變點偵測最小段長（取代硬編 magic；紅隊建議）
+    y_max_lag: int = 10           # X→Y 延遲估計搜尋上限（步）
     x_lag_order: int = 2          # DPCA 時間落後階數；過大惡化 n/p（紅隊 H5）
 
     # --- L2 MSPC ---
