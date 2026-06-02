@@ -48,6 +48,7 @@ class Config:
     mmd_bandwidth: float = 1.0      # MMD RBF bandwidth；或改 MMDAgg kernel set
     sinkhorn_eps: float = 0.1       # Sinkhorn 熵正則 ε；小→保 OT 幾何但貴/樣本需求大（紅隊 F2）
     perm_B: int = 200               # permutation 重抽次數（影響 p-value 解析度 1/(B+1)）
+    w_null_reps: int = 50           # Wasserstein 量級 null 的重抽次數（紅隊建議 ≥50）
     drift_persistence_k: int = 2    # 連續 k 窗超標才告警，濾單點 outlier
 
     # --- 融合/決策 ---
