@@ -25,4 +25,4 @@ api = ["fastapi>=0.110", "uvicorn>=0.27", "dash>=2.14", "plotly>=5.18"]
 where = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]  # 讓純 pytest（未 editable install）也能 import；可重現綠燈（紅隊 M0 債）
+pythonpath = ["src", "."]  # src=核心；"."=讓 repo 根的 frontend/ 可 import（M8 前端測試）
