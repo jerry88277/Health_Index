@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "httpx>=0.27"]  # httpx 為 FastAPI TestClient 的測試依賴
 # API/UI 依賴於 M7/M8 啟用，避免 MVP 早期過度安裝（Rule 2）
 api = ["fastapi>=0.110", "uvicorn>=0.27", "dash>=2.14", "plotly>=5.18"]
 
