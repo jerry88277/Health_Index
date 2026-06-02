@@ -23,7 +23,8 @@ class Config:
 
     # --- L1 資料品質 ---
     mcd_support_fraction: float = 0.75   # FastMCD 子集比例；勿動除非高污染率
-    dqi_x_threshold_factor: float = 3.0  # DQI_x 門檻 = factor × LOO trimmed mean（AVM 慣例）
+    dqi_x_threshold_factor: float = 3.0  # DQI_x 門檻 = factor × MCD-support 內 90% trimmed mean
+                                         # （刻意以 in-sample≈LOO 取代 AVM 原文 LOO，見 dqi_x.py docstring）
 
     # --- 前處理：分段/對齊 ---
     ssd_penalty: float = 10.0     # ruptures PELT penalty；須 TEP 掃描定值，勿硬信此預設
