@@ -1,0 +1,7 @@
+# 核心科學棧（偵測器）。API/UI 依賴見 pyproject [api]，M7/M8 再裝。
+numpy>=1.23
+scipy>=1.9
+scikit-learn>=1.1
+pandas>=1.5
+POT>=0.9
+pytest>=7

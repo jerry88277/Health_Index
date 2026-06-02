@@ -1,0 +1,5 @@
+# 統一行尾：repo 內一律 LF，消除 Windows CRLF 警告
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary
+*.jpg binary

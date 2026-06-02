@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "health_index"
+version = "0.0.1"
+description = "AVM 精神的泛化工連續製程隱性飄移偵測（確定性偵測器，runtime 不呼叫 LLM）"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.23",
+  "scipy>=1.9",
+  "scikit-learn>=1.1",
+  "pandas>=1.5",
+  "POT>=0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+# API/UI 依賴於 M7/M8 啟用，避免 MVP 早期過度安裝（Rule 2）
+api = ["fastapi>=0.110", "uvicorn>=0.27", "dash>=2.14", "plotly>=5.18"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
