@@ -98,15 +98,16 @@ def format_report(results: list[ACResult]) -> str:
         "> **範圍**：單一合成 DGP（線性潛因子+列範數守恆）內的**超參 robustness**（不同 p/noise/drift/seed）。",
         "> 跨 DGP / 真實集(TEP/PRONTO/Gas)不退化**未驗**，列 backlog（需下載真實資料）——非完整 AC-4。",
         "",
-        "| config | AC1 golden健康 | AC2 drift∧SPC盲 | AC3 clean>drift | HI golden/clean/drift | SPC drift | 全過 |",
+        "| config | AC1 golden健康 | AC2 drift&SPC盲 | AC3 clean>drift | HI golden/clean/drift | SPC drift | 全過 |",
         "|---|:--:|:--:|:--:|---|--:|:--:|",
     ]
+    # 標記用 ASCII（Y/-），避免非 cp950 字元在 Windows 預設主控台 print 時 UnicodeEncodeError。
     for r in results:
         d = r.detail
         lines.append(
-            f"| {r.label} | {'✅' if r.ac1_golden_healthy else '❌'} "
-            f"| {'✅' if r.ac2_drift_caught_spc_blind else '❌'} "
-            f"| {'✅' if r.ac3_clean_vs_drift else '❌'} "
+            f"| {r.label} | {'Y' if r.ac1_golden_healthy else '-'} "
+            f"| {'Y' if r.ac2_drift_caught_spc_blind else '-'} "
+            f"| {'Y' if r.ac3_clean_vs_drift else '-'} "
             f"| {d['hi_golden']}/{d['hi_clean']}/{d['hi_drift']} "
             f"| {d['spc_drift']} | {'PASS' if r.all_pass else 'FAIL'} |"
         )

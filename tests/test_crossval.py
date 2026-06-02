@@ -135,3 +135,9 @@ def test_format_report_marks_scope_and_reflects_results(cv_results):
     for r in cv_results:
         assert r.label in md                          # 每組態都入報告
     assert f"{sum(r.all_pass for r in cv_results)}/{len(cv_results)}" in md
+
+
+def test_format_report_is_windows_console_safe(cv_results):
+    # WHY（M10 啟動手冊的 print 命令須在 Windows cp950 主控台可跑）：報告不得含非 cp950 字元，
+    # 否則文件化的 `python -c "...print(format_report(...))"` 會 UnicodeEncodeError（曾因 ✅/∧ 發生）。
+    format_report(cv_results).encode("cp950")        # 不丟 UnicodeEncodeError 即過
