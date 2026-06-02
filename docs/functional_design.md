@@ -47,7 +47,7 @@ tests/                  # 編碼 WHY；RNG 測試鎖 seed + 容忍帶
 
 ## 3. 統一資料契約（雙軌 + 凍結基準）— 維持骨架
 原始欄（adapter 提供）：`timestamp` / `x_<sensor>` / `grade_label` / `y_value`(多 NaN) / `y_timestamp`。
-衍生欄（pipeline 算）：`campaign_id` / `mode`{steady,transition,maintenance} / `run_id` / `is_golden_A` / `y_delay`。
+衍生欄（pipeline 算）：`campaign_id` / `mode`{steady,transition,maintenance} / `run_id` / `is_golden_a` / `y_delay`。
 設定（不入列，TEP 掃描定值）：`x_lag_order` / `ssd_penalty` / `mmd_bandwidth` / `sinkhorn_eps` / `cp_alpha` / `perm_B` / `random_state`。
 
 ## 4. 處理管線
@@ -56,7 +56,7 @@ flowchart TD
     A[adapter: 連續流+稀疏Y] --> B[ruptures 切段 → run_id]
     B --> C[穩態 gate + transition/maintenance 排除 → mode]
     C --> D[X→Y 延遲對齊]
-    D --> E{is_golden_A?}
+    D --> E{is_golden_a?}
     E -->|是| F["在 golden-A 上 fit 並【凍結】PCA/SFA/GPR/null 分佈"]
     E -->|否| G[L1 FastMCD閘 → L2 GSI/T²/SPE/RBC → L3 Ŷ+可信度 → L4 漂移]
     F --> G

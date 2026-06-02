@@ -26,8 +26,10 @@ class Config:
     dqi_x_threshold_factor: float = 3.0  # DQI_x 門檻 = factor × LOO trimmed mean（AVM 慣例）
 
     # --- 前處理：分段/對齊 ---
-    ssd_penalty: float = 10.0  # ruptures PELT penalty；須 TEP 掃描定值，勿硬信此預設
-    x_lag_order: int = 2       # DPCA 時間落後階數；過大惡化 n/p（紅隊 H5）
+    ssd_penalty: float = 10.0     # ruptures PELT penalty；須 TEP 掃描定值，勿硬信此預設
+    transition_width: int = 10    # 換線/維修後 settling 段長度（排除於 golden-A baseline）
+    cpd_min_size: int = 12        # ruptures 變點偵測最小段長（取代硬編 magic；紅隊建議）
+    x_lag_order: int = 2          # DPCA 時間落後階數；過大惡化 n/p（紅隊 H5）
 
     # --- L2 MSPC ---
     pca_var_explained: float = 0.90  # 保留主成分的累積變異比例

@@ -4,4 +4,5 @@ scipy>=1.9
 scikit-learn>=1.1
 pandas>=1.5
 POT>=0.9
+ruptures>=1.1
 pytest>=7
