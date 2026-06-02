@@ -49,10 +49,13 @@ class Config:
     sinkhorn_eps: float = 0.1       # Sinkhorn 熵正則 ε；小→保 OT 幾何但貴/樣本需求大（紅隊 F2）
     perm_B: int = 200               # permutation 重抽次數（影響 p-value 解析度 1/(B+1)）
     w_null_reps: int = 50           # Wasserstein 量級 null 的重抽次數（紅隊建議 ≥50）
-    drift_persistence_k: int = 2    # 連續 k 窗超標才告警，濾單點 outlier
+    drift_persistence_k: int = 2    # 連續 k 窗超標才告警，濾單點 outlier（預留，M9 接線；M6 未使用）
 
     # --- 融合/決策 ---
-    fwer_method: str = "holm"  # 多重比較校正法；單一融合決策點之外的 type-I 保險（紅隊 N2）
+    drift_scale: float = 5.0          # L4 Wasserstein z → 健康子分數的衰減尺度（exp(-z/scale)）；TEP 校準
+    hi_alarm_threshold: float = 0.6   # Health Index 告警門檻（< 即告警）；須 TEP 校準
+    fusion_weights: tuple = (1.0, 2.0, 1.0)  # (L1, L2, L4) 融合權重；L2 為隱性飄移主訊號加重；M9 校準
+    fwer_method: str = "holm"  # 多重比較校正法（預留，M9 接線；M6 融合為 MVP 加權，未做 FWER）
 
 
 DEFAULT = Config()
