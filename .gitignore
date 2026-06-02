@@ -9,6 +9,10 @@ __pycache__/
 .venv/
 venv/
 
+# Claude 排程器執行期狀態（非專案設定，settings.json/hooks 仍進版控）
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
+
 # 資料（依授權各自下載，不進版控）
 data/
 
