@@ -66,14 +66,17 @@ flowchart TD
 > **凍結原則（紅隊 N3）**：所有模型在 golden-A fit 後凍結；permutation 只重排樣本標籤、**不重估模型**，否則 null 偏樂觀。
 
 ## 5. REST API
-| 方法 | 路徑 | 功能 |
-|---|---|---|
-| GET | /datasets | 列資料集 |
-| POST | /baseline | 以 golden-A 建並**凍結**基準（回 pca_k, null 分佈摘要, calib 規模）|
-| POST | /analyze | 跑判斷鏈 → AnalysisResult |
-| GET | /analyze/{job}/health | HI 時間軸 [{t,hi,t2,spe,gsi,drift,ci,mode,flags,degraded}] |
-| GET | /analyze/{job}/contribution | RBC 肇因 [{sensor,rbc}] |
-| POST | /crossval | 跨資料集驗證（含真實集不退化檢核）|
+| 方法 | 路徑 | 功能 | 實作狀態 |
+|---|---|---|---|
+| GET | /health | 健康檢查（煙霧端點）| ✅ M7 |
+| GET | /datasets | 列資料集 | ✅ M7 |
+| POST | /baseline | 以 golden-A 建並**凍結**基準（回 pca_k, null 分佈摘要, calib 規模）| ⏳ M-later |
+| POST | /analyze | 跑判斷鏈 → AnalysisResult（per-campaign 彙總）| ✅ M7 |
+| POST | /timeline | 逐樣本 T²/SPE/GSI + 控制限 + campaign 邊界 | ✅ B1 |
+| POST | /contribution | per-campaign RBC 肇因 [{variable,rbc,spc_exceedance}] | ✅ B1 |
+| POST | /crossval | 跨資料集驗證（含真實集不退化檢核）| ⏳ B2 |
+
+> **命名偏離（B1，Rule 12）**：原訂 `GET /analyze/{job}/health`、`/analyze/{job}/contribution` 為有狀態（job store）。MVP 採**無狀態**（請求帶 seed/drift 重算、無 job 持久層），故實作為無路徑段的 `POST /timeline`、`POST /contribution`；待引入 job store 時再回 RESTful 子資源路徑。Ŷ vs Y 軟測量時間軸欄位仍待 L3 端點（M-later）。
 
 ## 6. L4 漂移偵測（重新設計，紅隊重點）
 ```

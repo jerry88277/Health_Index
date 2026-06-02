@@ -148,7 +148,8 @@ python -c "from health_index.validation.crossval import cross_validate, format_r
 | 後端 `/health` `/datasets` `/analyze`（彙總式） | ✅ 已實作（M7） |
 | 前端 campaign 級 HI / 子分數圖 | ✅ 已實作（M8） |
 | cross-validation 跨組態超參 robustness（合成） | ✅ 已實作（M9） |
-| 後端 `/baseline`、時間軸 `/analyze/{job}/health`、RBC `/contribution`、`/crossval` | ⏳ M-later（前端 per-sample 時間軸/Ŷvsy/RBC 依賴此） |
+| 後端 `POST /timeline`（逐樣本 T²/SPE/GSI）、`POST /contribution`（RBC 肇因）+ 前端時間軸/肇因圖 | ✅ B1（指出隱性飄移在序列中何時起、哪個變數） |
+| 後端 `/baseline`、Ŷ vs Y 軟測量時間軸、`/crossval` | ⏳ M-later／B2 |
 | L5 批次 DTW（penicillin/IndPenSim） | ⏳ 延後（連續型聚焦，待批次資料） |
 | **完整 AC-4「真實集不退化」** | ⏳ backlog：需下載真實資料（UCI Gas Drift 為最低成本起點）；目前僅合成多組態泛化 |
 | **AC-6「golden-A 誤報率≤α」嚴格 FWER 控制** | ⏳ M6 未接線（`config.fwer_method` 已預留）；目前以雙軌融合+硬閘安全網，未做嚴格 FWER 校正 |

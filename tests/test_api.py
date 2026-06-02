@@ -71,3 +71,73 @@ def test_analyze_deterministic():
     a = client.post("/analyze", json=body)
     b = client.post("/analyze", json=body)
     assert a.status_code == 200 and a.json() == b.json()
+
+
+# --- B1：時間軸端點 + RBC 肇因 ---
+_B1 = {"dataset_id": "synthetic", "seed": 5, "drift_strength": 1.2}
+
+
+def test_timeline_shape_and_spans():
+    r = client.post("/timeline", json=_B1)
+    assert r.status_code == 200
+    d = r.json()
+    assert len(d["t2"]) == len(d["spe"]) == len(d["gsi"]) == 1500  # 5 campaigns × 300
+    spans = {s["campaign_id"]: s for s in d["campaigns"]}
+    assert set(spans) == {0, 1, 2, 3, 4}
+    assert spans[0]["start"] == 0 and spans[4]["end"] == 1500 and spans[4]["grade"] == "A"
+
+
+def test_timeline_spe_exceeds_limit_in_drift_not_golden():
+    # WHY（時序鑑別）：逐樣本 SPE 在 drift campaign 大量越限、golden/乾淨回歸幾乎不越限 →
+    # 時間軸忠實反映「何時」隱性飄移。若 timeline 把序列接錯/重算分歧，這裡會破。
+    import numpy as np
+
+    d = client.post("/timeline", json=_B1).json()
+    spe = np.array(d["spe"])
+    lim = d["spe_limit"]
+    span = {s["campaign_id"]: s for s in d["campaigns"]}
+
+    def rate(cid):
+        s = span[cid]
+        return (spe[s["start"] : s["end"]] > lim).mean()
+
+    assert rate(4) > 0.5                       # drift A 大量越限
+    assert rate(0) < 0.1 and rate(2) < 0.1     # golden / 乾淨回歸 幾乎不越限
+
+
+def test_contribution_names_hidden_drift_vars_spc_blind():
+    # marquee WHY（B1 核心，index 存在的理由）：drift campaign 的 top-RBC 變數，其單變數 3σ 越界率
+    # 近 0 → RBC 點名了單變數 SPC 看不到的隱性飄移變數；且 drift RBC 強度遠大於 golden（非全 0 假綠）。
+    d = client.post("/contribution", json=_B1).json()
+    camps = {c["campaign_id"]: c for c in d["campaigns"]}
+    c4 = camps[4]["top_variables"]
+    assert all(v["spc_exceedance"] < 0.1 for v in c4)               # 隱性：單變數 SPC 盲
+    assert c4[0]["rbc"] > 0.5                                       # 有實質肇因（非噪聲地板）
+    assert c4[0]["rbc"] > camps[0]["top_variables"][0]["rbc"] * 3   # drift RBC 遠大於 golden
+    assert camps[4]["is_reentry"] is True
+    assert c4 == sorted(c4, key=lambda v: v["rbc"], reverse=True)   # RBC 降序排列
+
+
+def test_timeline_thin_wrapper_matches_core():
+    # WHY（薄封裝，Rule 3）：/timeline 的 SPE 與直接呼叫核心 MSPC 一致 → 零重算分歧。
+    import numpy as np
+
+    from health_index.adapters import synthetic as syn
+    from health_index.health import HealthIndex
+
+    ds, gt = syn.generate(seed=5, drift_strength=1.2)
+    cols = list(ds.x_columns)
+    hi = HealthIndex().fit(ds.frame.loc[gt.golden_mask, cols].to_numpy())
+    spe_core = np.round(hi.mspc_.spe(ds.frame[cols].to_numpy()), 4)
+    spe_api = np.array(client.post("/timeline", json=_B1).json()["spe"])
+    assert np.allclose(spe_core, spe_api, atol=1e-4)
+
+
+def test_timeline_contribution_deterministic():
+    assert client.post("/timeline", json=_B1).json() == client.post("/timeline", json=_B1).json()
+    assert client.post("/contribution", json=_B1).json() == client.post("/contribution", json=_B1).json()
+
+
+def test_timeline_unknown_dataset_404():
+    assert client.post("/timeline", json={"dataset_id": "nope"}).status_code == 404
+    assert client.post("/contribution", json={"dataset_id": "nope"}).status_code == 404

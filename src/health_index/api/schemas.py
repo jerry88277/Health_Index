@@ -31,3 +31,48 @@ class AnalyzeResponse(BaseModel):
     n_campaigns: int
     reentry_campaigns: list[int]
     campaigns: list[CampaignResult]
+
+
+class CampaignSpan(BaseModel):
+    """時間軸上一個 campaign 的位置區間（end 為 exclusive）。"""
+
+    campaign_id: int
+    start: int
+    end: int
+    grade: str
+
+
+class TimelineResponse(BaseModel):
+    """逐樣本 T²/SPE/GSI 時間軸 + 控制限 + campaign 邊界（B1）。"""
+
+    dataset_id: str
+    t2: list[float]
+    spe: list[float]
+    gsi: list[float]
+    t2_limit: float
+    spe_limit: float
+    campaigns: list[CampaignSpan]
+
+
+class ContributionVar(BaseModel):
+    """單一變數的肇因：RBC 強度 + 對照其單變數 3σ 越界率（證 SPC 盲）。"""
+
+    variable: str
+    rbc: float
+    spc_exceedance: float
+
+
+class CampaignContribution(BaseModel):
+    """一個 campaign 的 top-k 肇因變數排序（RBC 由高到低）。"""
+
+    campaign_id: int
+    grade: str
+    is_reentry: bool
+    top_variables: list[ContributionVar]
+
+
+class ContributionResponse(BaseModel):
+    """per-campaign RBC 肇因分解（B1，指出哪個參數帶飄移）。"""
+
+    dataset_id: str
+    campaigns: list[CampaignContribution]
