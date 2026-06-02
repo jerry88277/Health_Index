@@ -50,6 +50,7 @@
 | **tep2py（Python 介面）** | 連續（產生 TEP 模擬資料） | <https://github.com/camaramm/tep2py> | 見 repo LICENSE | 包裹原始 Fortran（Braatz group）程式，需用 f2py 由原始碼編譯；產生帶 disturbance 的 TEP 資料表。 |
 | **pyTEP（互動式模擬 API）** | 連續 | <https://github.com/ccreinartz11/pytep> | 見 repo LICENSE | 需安裝 MATLAB Engine for Python（需授權 MATLAB/Simulink）+ Python 3.7；支援互動式情境設定。論文：SoftwareX 2022, DOI 10.1016/j.softx.2022.101053。 |
 | **IndPenSim — Industrial-scale Penicillin Fermentation（Goldrick et al.）** | 批次（fed-batch fermentation） | 官方：<http://www.industrialpenicillinsimulation.com> · Mendeley Data：<https://data.mendeley.com/datasets/npt257bjxn/1> · 模擬器 MATLAB：<https://www.mathworks.com/matlabcentral/fileexchange/49041> | Mendeley Data（CC BY 4.0，依頁面標示）；MATLAB File Exchange 依其 BSD 條款 | 100 批 × 完整製程 + Raman 光譜（約 2.5 GB）；batch 1–30 recipe 驅動、31–60 操作員、61–90 APC+Raman、91–100 含 fault。基準論文見下。 |
+| **UCI Gas Sensor Array Drift（Vergara et al. 2012）— B2 真實集 adapter** | 離散量測（time-ordered batches；感測器跨 batch 老化 = concept/sensor drift） | <https://archive.ics.uci.edu/dataset/224/gas+sensor+array+drift+dataset> | CC BY 4.0（依頁面標示） | 128 features=16 sensor×8；6 氣體；10 batch 跨 36 月，明確時間漂移結構。論文 DOI 10.1016/j.snb.2012.01.074；資料集 DOI 10.24432/C5RP6W。**已於 `continuous_datasets_survey.md` §資料集表（★3）查證**——本表為單一入口指標，不重複 stamp。 |
 
 ### IndPenSim 相關基準論文（已驗證）
 
