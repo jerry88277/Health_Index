@@ -55,7 +55,10 @@ class Config:
     drift_scale: float = 5.0          # L4 Wasserstein z → 健康子分數的衰減尺度（exp(-z/scale)）；TEP 校準
     hi_alarm_threshold: float = 0.6   # Health Index 告警門檻（< 即告警）；須 TEP 校準
     fusion_weights: tuple = (1.0, 2.0, 1.0)  # (L1, L2, L4) 融合權重；L2 為隱性飄移主訊號加重；M9 校準
-    fwer_method: str = "holm"  # 多重比較校正法（預留，M9 接線；M6 融合為 MVP 加權，未做 FWER）
+    fwer_method: str = "holm"   # 多重比較校正法標記；B3 的 _holm_reject **硬編 Holm**（未依此欄 dispatch），
+                                # 其他方法（Hochberg/BH）待擴充——此欄目前僅文件性，勿誤以為可切換
+    fwer_alpha: float = 0.05    # AC-6 族系錯誤率（FWER）目標水準；golden-A 誤報率須 ≤ 此值（B3）
+    fwer_n_boot: int = 200      # L1/L2 窗級 p-value 的 golden bootstrap null 重抽次數（解析度 1/(B+1)）
 
 
 DEFAULT = Config()
