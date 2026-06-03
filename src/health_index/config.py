@@ -51,6 +51,11 @@ class Config:
     w_null_reps: int = 50           # Wasserstein 量級 null 的重抽次數（紅隊建議 ≥50）
     drift_persistence_k: int = 2    # 連續 k 窗超標才告警，濾單點 outlier（預留，M9 接線；M6 未使用）
 
+    # --- L5 批次軌跡 DTW（B4）---
+    dtw_resample_len: int = 100   # 批次軌跡降採樣固定點數（控 O(n²) 成本，Rule 6；FastDTW 替身）
+    dtw_band: float = 0.15        # Sakoe-Chiba band 比例（限 warping、再降成本）
+    dtw_threshold_k: float = 2.0  # 偏移門檻 = 參考批 LOO 距離 mean + k·std（k=2 ≈ 5% 正常 FPR）
+
     # --- 融合/決策 ---
     drift_scale: float = 5.0          # L4 Wasserstein z → 健康子分數的衰減尺度（exp(-z/scale)）；TEP 校準
     hi_alarm_threshold: float = 0.6   # Health Index 告警門檻（< 即告警）；須 TEP 校準
