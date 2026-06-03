@@ -19,11 +19,15 @@ from frontend.app import (  # noqa: E402
     OK,
     build_contribution_figure,
     build_health_figure,
+    build_softsensor_figure,
+    build_spc_figure,
     build_subscore_figure,
     build_timeline_figure,
     create_app,
     fetch_analysis,
     fetch_contribution,
+    fetch_series,
+    fetch_softsensor,
     fetch_timeline,
 )
 from health_index.api.server import app as api_app  # noqa: E402
@@ -72,16 +76,31 @@ def test_health_figure_renders_alarm_discrimination(analysis):
 
 def test_subscore_figure_has_three_layers(analysis):
     fig = build_subscore_figure(analysis)
-    assert {t.name for t in fig.data} == {"L1", "L2", "L4"}
+    assert {t.name for t in fig.data} == {"資料效度", "製程關係偏移", "整體漂移"}
 
 
 def test_subscore_figure_discriminates_drift(analysis):
-    # WHY（紅隊 B 🔴）：子分數圖須真接對「名稱↔值」——drift(4) 的 L2 子分數應低於 golden(0)。
+    # WHY（紅隊 B 🔴）：子分數圖須真接對「名稱↔值」——drift(4) 的「製程關係偏移」(L2) 子分數應低於 golden(0)。
     # 鎖住「子分數全接 0 / L2↔L4 互換」這類喪失鑑別資訊的假綠（Rule 9）。
     fig = build_subscore_figure(analysis)
     idx = {c["campaign_id"]: i for i, c in enumerate(analysis["campaigns"])}
-    l2 = {t.name: t.y for t in fig.data}["L2"]
+    l2 = {t.name: t.y for t in fig.data}["製程關係偏移"]
     assert l2[idx[4]] < l2[idx[0]]
+
+
+def test_fetch_handles_none_inputs():
+    # WHY（修 bug）：輸入框清空時 dcc.Input 回傳 None → 原 int(None)/float(None) 拋
+    # 「float() argument must be a real number, not 'NoneType'」。None 須套預設值、不報錯。
+    a = fetch_analysis(None, dataset_id="synthetic", seed=None, drift_strength=None, client=client)
+    assert a["n_campaigns"] == 5
+    t = fetch_timeline(None, dataset_id=None, seed=None, drift_strength=None, client=client)
+    assert len(t["spe"]) == 1500
+
+
+def test_analyze_returns_monitored_variables():
+    # WHY（監控參數區塊）：/analyze 回傳監控的製程參數名稱
+    a = fetch_analysis(None, dataset_id="synthetic", seed=5, drift_strength=1.2, client=client)
+    assert len(a["variables"]) == 10 and "x00" in a["variables"]
 
 
 def test_fetch_analysis_raises_on_backend_error():
@@ -111,8 +130,8 @@ def contribution():
 
 def test_timeline_figure_has_spe_t2_and_limit(timeline):
     fig = build_timeline_figure(timeline)
-    assert {"SPE", "T²"} <= {t.name for t in fig.data}
-    # SPE 控制限線存在且值正確（接錯 limit 會被抓）
+    assert {"異常程度(SPE)", "製程偏移(T²)"} <= {t.name for t in fig.data}
+    # 正常上限線存在且值正確（接錯 limit 會被抓）
     assert any(getattr(s, "y0", None) == timeline["spe_limit"] for s in fig.layout.shapes)
 
 
@@ -122,7 +141,8 @@ def test_contribution_figure_ranks_and_marks_spc(contribution):
     bar = fig.data[0]
     ys = list(bar.y)
     assert ys == sorted(ys, reverse=True)                      # RBC 降序
-    assert len(bar.x) >= 1 and all("SPC" in t for t in bar.text)  # 每根標 SPC 對照
+    # 每根柱標自己的可疑度數值（非 0%；避免 drift 段越界率~0 時每根都顯示 "0%" 的困惑）
+    assert list(bar.text) == [f"{y:.2f}" for y in ys]
 
 
 def test_contribution_figure_selects_campaign(contribution):
@@ -135,3 +155,47 @@ def test_contribution_figure_selects_campaign(contribution):
 def test_layout_has_timeline_and_contribution_graphs():
     ids = _collect_ids(create_app().layout)
     assert {"timeline-graph", "contribution-graph", "contrib-campaign"} <= ids
+
+
+@pytest.fixture(scope="module")
+def series():
+    return fetch_series(None, dataset_id="synthetic", seed=5, drift_strength=1.2, client=client)
+
+
+def test_spc_figure_single_var_has_3sigma_band(series):
+    # WHY（SPC 視圖）：單變數圖須畫該變數值 + 上下 3σ 管制線（值取自 golden）
+    fig = build_spc_figure(series, "x03")
+    yvals = {getattr(s, "y0", None) for s in fig.layout.shapes}
+    assert series["spc_upper"]["x03"] in yvals and series["spc_lower"]["x03"] in yvals
+    assert fig.data[0].name == "x03"
+
+
+def test_spc_figure_all_overlays_ten_vars(series):
+    # WHY（#6 全參數時序）：「全部」模式疊 10 條標準化軌跡
+    fig = build_spc_figure(series, "__all__")
+    assert len({t.name for t in fig.data}) == 10
+
+
+def test_layout_has_spc_graph():
+    ids = _collect_ids(create_app().layout)
+    assert {"spc-graph", "spc-variable"} <= ids
+
+
+def test_health_figure_has_uncertainty_error_bars(analysis):
+    # WHY（融合分數不確定度帶）：health 圖須帶 error_y（bootstrap 信賴帶）
+    fig = build_health_figure(analysis)
+    assert fig.data[0].error_y is not None and fig.data[0].error_y.array is not None
+
+
+def test_softsensor_figure_has_yhat_y_and_band():
+    # WHY（量測值偏移視圖）：⑥圖含預測 Ŷ 線、實際 Y 點、可信帶
+    soft = fetch_softsensor(None, dataset_id="synthetic", seed=5, drift_strength=1.2, client=client)
+    fig = build_softsensor_figure(soft)
+    names = {t.name for t in fig.data if t.name}
+    assert "預測 Ŷ" in names and "實際 Y" in names
+    assert any("可信帶" in (t.name or "") for t in fig.data)
+
+
+def test_layout_has_softsensor_graph():
+    ids = _collect_ids(create_app().layout)
+    assert "softsensor-graph" in ids

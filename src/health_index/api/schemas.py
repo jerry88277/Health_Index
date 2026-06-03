@@ -24,6 +24,8 @@ class CampaignResult(BaseModel):
     health_index: float
     is_alarm: bool
     subscores: dict[str, float]
+    health_lo: float = 0.0  # 健康分數 bootstrap 信賴帶下界（5 百分位；不確定度）
+    health_hi: float = 0.0  # 健康分數 bootstrap 信賴帶上界（95 百分位）
 
 
 class AnalyzeResponse(BaseModel):
@@ -31,6 +33,7 @@ class AnalyzeResponse(BaseModel):
     n_campaigns: int
     reentry_campaigns: list[int]
     campaigns: list[CampaignResult]
+    variables: list[str] = []  # 監控的製程參數欄名（供前端「監控參數有哪些」）
 
 
 class CampaignSpan(BaseModel):
@@ -76,3 +79,26 @@ class ContributionResponse(BaseModel):
 
     dataset_id: str
     campaigns: list[CampaignContribution]
+
+
+class SeriesResponse(BaseModel):
+    """逐樣本原始製程參數時序 + golden 3σ 單變數管制線（SPC 視圖；示範隱性飄移對 SPC 隱形）。"""
+
+    dataset_id: str
+    variables: list[str]
+    series: dict             # var -> 逐樣本原始值 list[float]
+    spc_upper: dict          # var -> golden mean + 3σ
+    spc_lower: dict          # var -> golden mean - 3σ
+    campaigns: list[CampaignSpan]
+
+
+class SoftSensorResponse(BaseModel):
+    """L3 軟測量：逐樣本預測量測 Ŷ + 可信帶 + 實際 Y（量測值偏移視圖）。"""
+
+    dataset_id: str
+    yhat: list[float]               # 逐樣本 GPR 預測 Ŷ
+    band_half: list[float]          # 逐樣本可信帶半寬（CP 半寬，或退回 2×GPR 後驗 std）
+    y_actual: list                  # 實際 Y（有觀測處為 float，否則 None）
+    cp_available: bool              # 是否以 Conformal Prediction 可信帶（標籤足量）
+    band_kind: str                  # "CP" 或 "GPR_std"（誠實標可信帶來源）
+    campaigns: list[CampaignSpan]

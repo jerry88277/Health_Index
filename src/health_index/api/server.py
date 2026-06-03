@@ -34,8 +34,12 @@ from .schemas import (
     ContributionResponse,
     ContributionVar,
     DatasetInfo,
+    SeriesResponse,
+    SoftSensorResponse,
     TimelineResponse,
 )
+from ..detectors.soft_sensor import SoftSensor
+from ..interface import Y_VALUE
 
 app = FastAPI(title="Health_Index API", version=__version__)
 
@@ -84,6 +88,7 @@ def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
             continue
         X = sub[cols].to_numpy()
         ss = hi.subscores(X)
+        lo, hi_ = _health_band(hi, X)
         campaigns.append(
             CampaignResult(
                 campaign_id=cid,
@@ -92,6 +97,8 @@ def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
                 health_index=round(hi.health_index(X), 4),
                 is_alarm=hi.is_alarm(X),
                 subscores={k: round(v, 4) for k, v in ss.items()},
+                health_lo=lo,
+                health_hi=hi_,
             )
         )
     return AnalyzeResponse(
@@ -99,6 +106,53 @@ def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
         n_campaigns=len(campaigns),
         reentry_campaigns=reentry,
         campaigns=campaigns,
+        variables=cols,
+    )
+
+
+def _health_band(hi, X, *, B: int = 10, seed: int = 0) -> tuple[float, float]:
+    """健康分數的 bootstrap 信賴帶（5/95 百分位）——融合點分數的不確定度（紅隊：點估非確定性）。
+
+    對窗內樣本有放回重抽 B 次、各算 health_index，取百分位。B 偏小以控線上成本（Rule 6）。
+    """
+    rng = np.random.default_rng(seed)
+    n = len(X)
+    boots = np.array([hi.health_index(X[rng.choice(n, size=n, replace=True)]) for _ in range(B)])
+    return round(float(np.percentile(boots, 5)), 4), round(float(np.percentile(boots, 95)), 4)
+
+
+@app.post("/softsensor", response_model=SoftSensorResponse)
+def softsensor(req: AnalyzeRequest) -> SoftSensorResponse:
+    """L3 軟測量：GPR 以 golden (X→Y) 訓練，逐樣本預測 Ŷ + 可信帶 + 實際 Y（量測值偏移視圖）。
+
+    可信帶：標籤足量時用 Conformal Prediction（有限樣本覆蓋保證）；標籤稀少（synthetic Y 稀疏，
+    < cp_min_calibration）則退回 2×GPR 後驗 std，並以 band_kind 誠實標來源（紅隊 H1 雙路）。
+    用途：drift 段 X→Y 映射偏移 → Ŷ 偏離實際 Y、落出可信帶＝量測值層飄移 / Ŷ 不可信。
+    """
+    _ds, gt, fr, _ds_seg, cols, hi = _prepare(req)
+    Xg = _ds.frame.loc[gt.golden_mask, cols].to_numpy()
+    yg = _ds.frame.loc[gt.golden_mask, Y_VALUE].to_numpy()
+    ss = SoftSensor(hi.config).fit(Xg, yg)
+    ss.calibrate_cp(Xg, yg)
+
+    X = fr[cols].to_numpy()
+    yhat, std = ss.predict(X, return_std=True)
+    if ss.cp_available:
+        band_half = np.full(len(X), float(ss.cp_q_))
+        kind = "CP"
+    else:
+        band_half = 2.0 * std
+        kind = "GPR_std"
+    y_actual = fr[Y_VALUE].to_numpy()
+    spans = [CampaignSpan(campaign_id=c, start=s, end=e, grade=g) for c, s, e, g in _campaign_spans(fr, cols)]
+    return SoftSensorResponse(
+        dataset_id=req.dataset_id,
+        yhat=[round(float(v), 4) for v in yhat],
+        band_half=[round(float(v), 4) for v in band_half],
+        y_actual=[None if not np.isfinite(v) else round(float(v), 4) for v in y_actual],
+        cp_available=ss.cp_available,
+        band_kind=kind,
+        campaigns=spans,
     )
 
 
@@ -135,6 +189,28 @@ def timeline(req: AnalyzeRequest) -> TimelineResponse:
         gsi=[round(float(v), 4) for v in m.gsi(X)],
         t2_limit=round(float(m.t2_lim_), 4),
         spe_limit=round(float(m.spe_lim_), 4),
+        campaigns=spans,
+    )
+
+
+@app.post("/series", response_model=SeriesResponse)
+def series(req: AnalyzeRequest) -> SeriesResponse:
+    """逐樣本原始製程參數時序 + golden-A 的單變數 3σ 管制線（SPC 視圖）。
+
+    用途：示範**隱性飄移對單變數 SPC 隱形**——drift 段每個參數多半仍在各自 3σ 管制線內（單看正常），
+    但 /analyze 的融合健康度已告警。薄封裝（Rule 3）：管制線＝golden 各欄 mean±3σ，原始值直接出。
+    """
+    _ds, gt, fr, _ds_seg, cols, hi = _prepare(req)
+    X = fr[cols].to_numpy()
+    Xg = _ds.frame.loc[gt.golden_mask, cols].to_numpy()
+    gm, gs = Xg.mean(axis=0), Xg.std(axis=0)
+    spans = [CampaignSpan(campaign_id=c, start=s, end=e, grade=g) for c, s, e, g in _campaign_spans(fr, cols)]
+    return SeriesResponse(
+        dataset_id=req.dataset_id,
+        variables=cols,
+        series={c: [round(float(v), 4) for v in X[:, j]] for j, c in enumerate(cols)},
+        spc_upper={c: round(float(gm[j] + 3 * gs[j]), 4) for j, c in enumerate(cols)},
+        spc_lower={c: round(float(gm[j] - 3 * gs[j]), 4) for j, c in enumerate(cols)},
         campaigns=spans,
     )
 

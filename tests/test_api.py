@@ -141,3 +141,57 @@ def test_timeline_contribution_deterministic():
 def test_timeline_unknown_dataset_404():
     assert client.post("/timeline", json={"dataset_id": "nope"}).status_code == 404
     assert client.post("/contribution", json={"dataset_id": "nope"}).status_code == 404
+
+
+def test_series_shape_and_spc_blind_on_drift():
+    # marquee WHY（SPC 視圖）：/series 回傳逐樣本原始值 + golden 3σ 管制線；drift 段每個參數**幾乎都
+    # 在 3σ 內**（單變數 SPC 看不到），但 /analyze 同 request 對 drift 告警 → 隱性飄移的核心示範。
+    import numpy as np
+
+    d = client.post("/series", json=_B1).json()
+    assert len(d["variables"]) == 10
+    assert all(len(d["series"][v]) == 1500 for v in d["variables"])
+    span = {s["campaign_id"]: s for s in d["campaigns"]}
+    s, e = span[4]["start"], span[4]["end"]                 # drift campaign
+    M = np.array([d["series"][v][s:e] for v in d["variables"]]).T
+    up = np.array([d["spc_upper"][v] for v in d["variables"]])
+    lo = np.array([d["spc_lower"][v] for v in d["variables"]])
+    any_exceed = ((M > up) | (M < lo)).any(axis=1).mean()
+    assert any_exceed < 0.1                                 # 99% 樣本所有參數都在管制內＝SPC 盲
+    # 對照：同 request /analyze 對 drift(4) 告警
+    a = client.post("/analyze", json=_B1).json()
+    assert {c["campaign_id"]: c for c in a["campaigns"]}[4]["is_alarm"] is True
+
+
+def test_series_unknown_dataset_404():
+    assert client.post("/series", json={"dataset_id": "nope"}).status_code == 404
+
+
+def test_analyze_health_band_brackets_point():
+    # WHY（融合分數不確定度）：bootstrap 信賴帶須夾住點估（lo ≤ HI ≤ hi）
+    a = client.post("/analyze", json=_B1).json()
+    for c in a["campaigns"]:
+        assert c["health_lo"] <= c["health_index"] <= c["health_hi"]
+
+
+def test_softsensor_yhat_deviates_from_y_in_drift():
+    # marquee WHY（量測值偏移）：drift 段 X→Y 映射偏移 → |Ŷ−實際Y| 明顯大於 golden 段。
+    import numpy as np
+
+    d = client.post("/softsensor", json=_B1).json()
+    assert len(d["yhat"]) == 1500 and len(d["band_half"]) == 1500
+    span = {s["campaign_id"]: s for s in d["campaigns"]}
+    yhat = np.array(d["yhat"])
+    ya = np.array([np.nan if v is None else v for v in d["y_actual"]])
+
+    def mae(cid):
+        s, e = span[cid]["start"], span[cid]["end"]
+        obs = np.isfinite(ya[s:e])
+        return float(np.abs(yhat[s:e][obs] - ya[s:e][obs]).mean())
+
+    assert mae(4) > mae(0) * 2          # drift 段預測誤差遠大於 golden（量測層飄移）
+    assert d["band_kind"] in ("CP", "GPR_std")
+
+
+def test_softsensor_unknown_dataset_404():
+    assert client.post("/softsensor", json={"dataset_id": "nope"}).status_code == 404
