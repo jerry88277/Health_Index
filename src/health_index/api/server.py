@@ -38,12 +38,17 @@ from .schemas import (
     SoftSensorResponse,
     TimelineResponse,
 )
+from ..adapters import tep
 from ..detectors.soft_sensor import SoftSensor
 from ..interface import Y_VALUE
 
 app = FastAPI(title="Health_Index API", version=__version__)
 
-_DATASETS = {"synthetic": "合成連續製程（grade A→B→A→C→A，注入隱性飄移）"}
+_DATASETS = {
+    "synthetic": "合成連續製程（grade A→B→A→C→A，注入隱性飄移）",
+    "tep": "Tennessee Eastman 真實連續製程（Mode1/2/3 模態切換 + 注入隱性飄移）",
+}
+_DATASET_NVARS = {"synthetic": 10, "tep": 22}
 
 
 @app.get("/health")
@@ -54,7 +59,7 @@ def health() -> dict:
 
 @app.get("/datasets", response_model=list[DatasetInfo])
 def datasets() -> list[DatasetInfo]:
-    return [DatasetInfo(id="synthetic", name=_DATASETS["synthetic"], n_vars=10)]
+    return [DatasetInfo(id=k, name=v, n_vars=_DATASET_NVARS[k]) for k, v in _DATASETS.items()]
 
 
 def _prepare(req: AnalyzeRequest):
@@ -66,10 +71,14 @@ def _prepare(req: AnalyzeRequest):
     """
     if req.dataset_id not in _DATASETS:
         raise HTTPException(status_code=404, detail=f"未知資料集: {req.dataset_id}")
-    ds, gt = syn.generate(seed=req.seed, drift_strength=req.drift_strength)
+    if req.dataset_id == "tep":
+        # TEP：drift_strength 為注入比例（0–1，打亂變數佔比）；clamp 上界
+        ds, gt = tep.generate(seed=req.seed, drift_strength=min(req.drift_strength, 1.0))
+    else:
+        ds, gt = syn.generate(seed=req.seed, drift_strength=req.drift_strength)
     cols = list(ds.x_columns)
     fr = seg.segment(ds)
-    ds_seg = ProcessDataset(frame=fr, x_columns=ds.x_columns, name="synthetic")
+    ds_seg = ProcessDataset(frame=fr, x_columns=ds.x_columns, name=req.dataset_id)
     Xg = ds.frame.loc[gt.golden_mask, cols].to_numpy()
     hi = HealthIndex().fit(Xg)
     return ds, gt, fr, ds_seg, cols, hi

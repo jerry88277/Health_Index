@@ -175,6 +175,8 @@ def build_spc_figure(series: dict, variable: str) -> go.Figure:
     spans = series["campaigns"]
     n = len(next(iter(series["series"].values())))
     x = list(range(n))
+    if variable != "__all__" and variable not in series["series"]:
+        variable = series["variables"][0]  # 跨資料集切換時舊選值失效 → 退回第一個參數
     fig = go.Figure()
     if variable == "__all__":
         for v in series["variables"]:
@@ -319,8 +321,14 @@ def _settings_card() -> html.Div:
             html.Ul([html.Li([html.B(k + "："), v]) for k, v in _SETTINGS_HELP]),
             html.Div(
                 [
-                    dcc.Dropdown(id="dataset", options=[{"label": "synthetic（合成示範）", "value": "synthetic"}],
-                                 value="synthetic", style={"width": "220px"}),
+                    dcc.Dropdown(
+                        id="dataset",
+                        options=[
+                            {"label": "synthetic（合成示範）", "value": "synthetic"},
+                            {"label": "TEP（真實連續製程）", "value": "tep"},
+                        ],
+                        value="synthetic", style={"width": "240px"},
+                    ),
                     html.Span("種子"),
                     dcc.Input(id="seed", type="number", value=5, min=0, step=1, style={"width": "80px"}),
                     html.Span("飄移強度"),
@@ -406,6 +414,7 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
         Output("softsensor-graph", "figure"),
         Output("status", "children"),
         Output("monitored-params", "children"),
+        Output("spc-variable", "options"),
         Input("run", "n_clicks"),
         Input("contrib-campaign", "value"),
         Input("spc-variable", "value"),
@@ -422,21 +431,23 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
             soft = fetch_softsensor(base_url, dataset_id=dataset, seed=seed, drift_strength=drift)
         except Exception as exc:  # noqa: BLE001
             empty = go.Figure()
-            return empty, empty, empty, empty, empty, empty, f"後端錯誤：{exc}", "（無法取得）"
+            return empty, empty, empty, empty, empty, empty, f"後端錯誤：{exc}", "（無法取得）", []
         n_alarm = sum(c["is_alarm"] for c in analysis["campaigns"])
         status = f"共 {analysis['n_campaigns']} 段產品，{n_alarm} 段告警，換產品後回歸段＝{analysis['reentry_campaigns']}"
         vs = analysis.get("variables", [])
         monitored = f"監控 {len(vs)} 個製程參數：{'、'.join(vs)}" if vs else "（此資料未提供參數清單）"
+        spc_opts = [{"label": v, "value": v} for v in vs] + [{"label": "全部(標準化)", "value": "__all__"}]
         cid = int(contrib_cid) if contrib_cid is not None else 4
         return (
             build_health_figure(analysis),
             build_subscore_figure(analysis),
             build_contribution_figure(contrib, cid),
             build_timeline_figure(timeline),
-            build_spc_figure(series, spc_var or "x03"),
+            build_spc_figure(series, spc_var or (vs[0] if vs else "__all__")),
             build_softsensor_figure(soft),
             status,
             monitored,
+            spc_opts,
         )
 
     return app

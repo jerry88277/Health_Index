@@ -5,6 +5,8 @@ WHY：API 是判斷鏈的薄封裝。marquee＝**判斷鏈經 HTTP 端到端仍�
 這些測試必須失敗。
 """
 
+import os
+
 import pytest
 
 pytest.importorskip("fastapi")  # 他機未裝 [api] 依賴時跳過，不讓 collection 失敗
@@ -23,11 +25,47 @@ def test_health_endpoint():
     assert r.json()["status"] == "ok"
 
 
-def test_datasets_lists_synthetic():
+def test_datasets_lists_synthetic_and_tep():
     r = client.get("/datasets")
     assert r.status_code == 200
     ids = [d["id"] for d in r.json()]
-    assert "synthetic" in ids
+    assert "synthetic" in ids and "tep" in ids
+
+
+_TEP_DATA = os.path.join("data", "tep", "m1d00.mat")
+
+
+@pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
+def test_tep_through_api_marquee():
+    # TEP 經 HTTP 端到端：golden/乾淨回歸健康、drift 回歸告警（X 健康抓到注入隱性飄移），re-entry 正確
+    r = client.post("/analyze", json={"dataset_id": "tep", "seed": 0, "drift_strength": 1.0})
+    assert r.status_code == 200
+    data = r.json()
+    camps = {c["campaign_id"]: c for c in data["campaigns"]}
+    assert camps[0]["is_alarm"] is False                          # golden 健康
+    assert camps[2]["is_alarm"] is False                          # 乾淨換線回歸健康
+    assert camps[4]["is_alarm"] is True                           # drift 回歸告警
+    assert camps[4]["health_index"] < camps[2]["health_index"] - 0.2
+    assert data["reentry_campaigns"] == [2, 4]
+    assert len(data["variables"]) == 22                            # XMEAS1-22
+
+
+@pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
+def test_tep_softsensor_mapping_drift():
+    # Y 健康（軟測量）：drift 段 X→Y 映射被破壞 → Ŷ 偏離實際 Y（量測層抓到）
+    import numpy as np
+
+    d = client.post("/softsensor", json={"dataset_id": "tep", "seed": 0, "drift_strength": 1.0}).json()
+    span = {s["campaign_id"]: s for s in d["campaigns"]}
+    yhat = np.array(d["yhat"])
+    ya = np.array([np.nan if v is None else v for v in d["y_actual"]])
+
+    def mae(cid):
+        s, e = span[cid]["start"], span[cid]["end"]
+        obs = np.isfinite(ya[s:e])
+        return float(np.abs(yhat[s:e][obs] - ya[s:e][obs]).mean()) if obs.any() else 0.0
+
+    assert mae(4) > mae(0)              # drift 回歸的映射誤差 > golden（軟測量 Y 健康抓到）
 
 
 def test_analyze_chain_through_http():
