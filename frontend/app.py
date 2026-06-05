@@ -325,7 +325,7 @@ def _settings_card() -> html.Div:
                         id="dataset",
                         options=[
                             {"label": "synthetic（合成示範）", "value": "synthetic"},
-                            {"label": "TEP（真實連續製程）", "value": "tep"},
+                            {"label": "TEP（真實連續製程＋注入隱性飄移）", "value": "tep"},
                         ],
                         value="synthetic", style={"width": "240px"},
                     ),
