@@ -272,7 +272,7 @@ def build_fwer_figure(fw: dict) -> go.Figure:
     def lab(c: dict) -> str:
         return f"C{c['campaign_id']}·{c['grade']}" + ("*" if c["is_reentry"] else "")
 
-    susp = [round(1.0 - min(c["pvalues"].values()), 3) for c in camps]  # 可疑度＝1−最小 p（高=可疑）
+    susp = [round(1.0 - min((c.get("pvalues") or {"_": 1.0}).values()), 3) for c in camps]  # 可疑度＝1−最小 p
     colors = [ALARM if c["fwer_alarm"] else OK for c in camps]
     text = [
         ("告警：" + "+".join(_LAYER_NAME.get(k, k) for k in c["rejected"])) if c["fwer_alarm"] else "正常"
@@ -505,6 +505,8 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
         style={"maxWidth": "1100px", "margin": "0 auto", "fontFamily": "system-ui, sans-serif"},
     )
 
+    _fwer_memo: dict = {}  # 記憶化 AC-6 fwer（tep_tp 約 80s）——避免改 contrib/spc 下拉就整段重算（紅隊 B）
+
     @app.callback(
         Output("health-graph", "figure"),
         Output("subscore-graph", "figure"),
@@ -535,8 +537,13 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
         except Exception as exc:  # noqa: BLE001
             empty = go.Figure()
             return empty, empty, empty, empty, empty, empty, empty, empty, f"後端錯誤：{exc}", "（無法取得）", []
-        try:  # AC-6 fwer 較重（permutation/block-bootstrap）→ 獨立 try，失敗不拖垮其餘圖
-            fw_fig = build_fwer_figure(fetch_fwer(base_url, dataset_id=dataset, seed=seed, drift_strength=drift))
+        try:  # AC-6 fwer 較重（permutation/block-bootstrap）→ 獨立 try + 記憶化，失敗不拖垮其餘圖
+            _k = (dataset, seed, drift)
+            if _k not in _fwer_memo:
+                if len(_fwer_memo) > 16:
+                    _fwer_memo.clear()  # 有界，避免長跑無限增長
+                _fwer_memo[_k] = fetch_fwer(base_url, dataset_id=dataset, seed=seed, drift_strength=drift)
+            fw_fig = build_fwer_figure(_fwer_memo[_k])
         except Exception as exc:  # noqa: BLE001
             fw_fig = go.Figure()
             fw_fig.add_annotation(text=f"AC-6 計算失敗：{exc}", showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5)
