@@ -52,6 +52,12 @@ DEFAULT_DIR = os.path.join("data", "tep")
 XMEAS_COLS = list(range(0, 22))   # XMEAS1-22 製程感測器 = X
 G_COL, H_COL = 39, 40             # XMEAS40=產品 G、XMEAS41=產品 H = Y（品質）
 _STATIONARY = slice(500, 3500)    # Mode1/2/3 平穩區（去啟動暫態；TEP 閉迴路 72h 內慢非平穩）
+# 保時序情境（time_preserving=True，②）：寬連續平穩區；golden/clean/drift 取自 m1d00 **不同連續段**，
+# 不做 iid 重抽。block-bootstrap L4 null（DriftDetector 自估區塊長度 ℓ）吸收自相關+操作點漫遊，
+# 使乾淨連續回歸不再誤報；關係飄移改由 L2 SPE 殘差空間抓（實證，見模組末 docstring）。
+_TP_REGION = slice(500, 6500)     # 連續保序情境的寬平穩區（block-bootstrap null 需寬 golden）
+_TP_GOLDEN_LEN = 3000             # 保時序 golden 連續長度（ℓ≈43，穩定 block null）
+_TP_GAP = 200                     # campaign 間隔（確保 clean/drift 取自 golden 之外的不同連續段）
 # 模態檔 → grade/角色。各 campaign 自所屬模態的平穩 pool **iid 重抽**（同分佈→乾淨回歸健康；
 # 真實 TEP 在 72h 內非平穩，逐窗切會誤判 clean，故以 pool 重抽消除非平穩混淆，誠實標記）。
 _PLAN = [
@@ -114,6 +120,7 @@ def generate(
     y_every: int = 20,
     seed: int = 0,
     data_dir: str = DEFAULT_DIR,
+    time_preserving: bool = False,
 ) -> tuple[ProcessDataset, TEPGroundTruth]:
     """組 TEP 隱性飄移情境 → (ProcessDataset, TEPGroundTruth)，契約同 ``synthetic.generate``。
 
@@ -123,6 +130,10 @@ def generate(
         y_every: 每隔幾步保留一個 Y 量測（其餘 NaN，模擬稀疏實驗室抽樣）。
         seed: 注入 RNG 種子（決定論）。
         data_dir: TEP .mat 目錄。
+        time_preserving: False（預設，向後相容）＝各 campaign 自所屬模態 pool **iid 重抽**（消非平穩
+            混淆，但毀時序）。True（②）＝各 campaign 取自 **連續段、不重抽**，保留真實時序/自相關；
+            golden/clean/drift 取自 m1d00 **不同連續段**（clean 是 golden 之外的自然漫遊段，真考驗
+            「乾淨連續回歸不誤報」）。需搭配 L4 block-bootstrap null（DriftDetector 自動，ℓ>1）。
 
     Raises:
         FileNotFoundError: 缺所需 .mat（附下載指引）。
@@ -131,8 +142,9 @@ def generate(
     """
     x_columns = tuple(f"xmeas{i + 1:02d}" for i in XMEAS_COLS)
     rng = np.random.default_rng(seed)
-    pools = {f: _load_mat(f, data_dir)[_STATIONARY] for f in {p[0] for p in _PLAN}}
-    golden_x = pools["m1d00"][:, XMEAS_COLS]  # 注入相關排序用
+    region = _TP_REGION if time_preserving else _STATIONARY
+    pools = {f: _load_mat(f, data_dir)[region] for f in {p[0] for p in _PLAN}}
+    golden_x_pool = pools["m1d00"][:, XMEAS_COLS]  # iid 模式：注入相關排序用（whole pool，原行為）
 
     blocks_x: list[np.ndarray] = []
     blocks_y: list[np.ndarray] = []
@@ -143,15 +155,26 @@ def generate(
     drift_flags: list[np.ndarray] = []
 
     cursor = 0
+    file_cursor: dict[str, int] = {}  # 保時序模式：每檔連續配置游標（同檔多 campaign 取不同連續段）
+    golden_x_seg = None               # 保時序模式：以 golden **連續段** 排序注入相關（非 whole pool）
     for fname, grade, tag in _PLAN:
         pool = pools[fname]
-        npc = n_per_campaign * 2 if tag == "golden" else n_per_campaign  # golden 大窗→穩定基準
-        seg = pool[rng.choice(len(pool), size=npc, replace=True)]        # iid 重抽（同分佈）
+        if time_preserving:
+            npc = _TP_GOLDEN_LEN if tag == "golden" else n_per_campaign
+            start = 0 if fname not in file_cursor else file_cursor[fname] + _TP_GAP
+            seg = pool[start : start + npc]          # 連續段、不重抽（保時序/自相關）
+            file_cursor[fname] = start + npc
+        else:
+            npc = n_per_campaign * 2 if tag == "golden" else n_per_campaign  # golden 大窗→穩定基準
+            seg = pool[rng.choice(len(pool), size=npc, replace=True)]        # iid 重抽（同分佈）
         X = seg[:, XMEAS_COLS]
         gh = seg[:, [G_COL, H_COL]]                 # (n,2) 產品 G、H
         y = gh.mean(axis=1)                          # 純量品質代理（既有軟測量用 Y_VALUE）
+        if tag == "golden":
+            golden_x_seg = X
         if tag == "drift":  # 打亂 X 部分欄→破壞相關(X 健康)且斷 X→Y 配對(Y 健康)；保各欄邊際(單變數盲)
-            X = _inject_relationship_drift(X, golden_x, strength=drift_strength, seed=seed)
+            ref = golden_x_seg if time_preserving else golden_x_pool
+            X = _inject_relationship_drift(X, ref, strength=drift_strength, seed=seed)
         blocks_x.append(X)
         blocks_y.append(y)
         blocks_gh.append(gh)

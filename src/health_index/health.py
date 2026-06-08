@@ -63,7 +63,10 @@ class HealthIndex:
             gfit = G[perm[ncal:]]
             self._fwer_dqi_ = DQIxGate(self.config).fit(gfit)
             self._fwer_mspc_ = MSPCModel(self.config).fit(gfit)
-            self._fwer_drift_ = DriftDetector(self.config).fit(gfit)
+            # L4 的 p-value **本即自校準**（mmd_pvalue 的 null 取自自身 golden 分數，不用 calib split，
+            # 見 fwer_pvalues docstring）→ fit 於 **保序全 golden**（非 shuffled gfit），維 block-bootstrap
+            # 的時序：否則 shuffle 毀自相關 → block_len_=1 → 退回 vs-pool MMD → 連續乾淨回歸誤報（②）。
+            self._fwer_drift_ = DriftDetector(self.config).fit(G)
             self._fwer_split_ = True
         else:
             self._fwer_cal_ = G
@@ -112,8 +115,12 @@ class HealthIndex:
         之累，紅隊 N6）：
         - **L1**：離域指標比例（golden_calib vs X；離散低計數，此 synthetic 下近乎無功效＝恆保守）。
         - **L2**：每樣本 **SPE 均值**（golden_calib vs X；連續統計量，比 0/1 失控率更平滑有力——隱性飄移主訊號）。
-        - **L4**：``DriftDetector.mmd_pvalue``（比對 **golden_fit** 分數 ``Sg_`` vs X 的 block-permutation；
-          本即自校準 p-value，為三層中**唯一未用 calib split**者——輕微不對稱、已知設計債）。
+          誠實標（紅隊，②時序情境暴露的既有限制）：``_perm_two_sample`` 的 permutation null 假設 cal/X 可
+          交換；自相關連續窗的 SPE 有效樣本數 ≪ 窗長 → null 略偏不保守。實測 AC-6 族系誤報率對 **disjoint
+          held-out re-entry 窗**（生產情境）受控 ≈0.04–0.05；對人造 **in-sample 子窗** 可達 ~0.08（>α）。
+          屬 L2 permutation 既有性質（非 ② L4 改動引入），block-aware L2 列後續。
+        - **L4**：``DriftDetector.mmd_pvalue``（②後改 window-vs-window block-bootstrap；fit 於**保序全 golden**，
+          本即自校準 p-value，為三層中**唯一未用 calib split**者。紅隊實測 L4 golden 誤報率 0.000，含 in-sample）。
 
         Returns: {"L1","L2","L4"} → p∈(0,1]。
         """

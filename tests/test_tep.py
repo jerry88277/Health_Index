@@ -61,3 +61,38 @@ def test_tep_deterministic():
     assert np.array_equal(
         a.frame[list(a.x_columns)].to_numpy(), b.frame[list(b.x_columns)].to_numpy()
     )
+
+
+# --- ② 保時序情境（time_preserving）：block-bootstrap 使連續乾淨回歸不誤報、殘留飄移仍偵測 ---
+def _tp_campaigns(drift_strength=0.7):
+    ds, gt = tep.generate(drift_strength=drift_strength, time_preserving=True)
+    cols = list(ds.x_columns)
+    b = gt.campaign_bounds
+    seg = lambda i: ds.frame.iloc[b[i][0] : b[i][1]][cols].to_numpy()  # noqa: E731
+    return ds.frame.loc[gt.golden_mask, cols].to_numpy(), seg(2), seg(4), seg(1)  # golden,clean,drift,B
+
+
+def test_tep_time_preserving_clean_healthy_drift_detected():
+    # marquee WHY（②）：保**真實時序/自相關**（不 iid 重抽）下，block-bootstrap 使乾淨連續回歸
+    # **不誤報**、殘留隱性飄移仍被偵測——這正是先前（iid null）判為不可行、現經 ② 修正後可行的能力。
+    # 當 block-bootstrap 失效（退回 iid null）時，乾淨連續窗會誤報 → 本測試必失敗。
+    Xg, Xc, Xd, Xb = _tp_campaigns()
+    hi = HealthIndex().fit(Xg)
+    assert hi.drift_.block_len_ > 1            # 保序自相關 → 觸發 block 路徑（iid 才 =1）
+    assert not hi.fwer_alarm(Xg)              # golden 健康
+    assert not hi.fwer_alarm(Xc)              # 乾淨連續回歸不誤報（②核心修正）
+    assert hi.fwer_alarm(Xd)                  # 殘留隱性飄移被偵測
+    assert hi.fwer_alarm(Xb)                  # 換產品 B（真分佈位移）仍被偵測（未失鑑別力）
+
+
+def test_tep_time_preserving_drift_is_l2_spe_while_spc_and_l4_blind():
+    # WHY（誠實歸因，②）：保時序下注入關係飄移由 **L2 SPE 殘差空間** 抓；保邊際 → 單變數 3σ 與 L4
+    # 分數空間皆盲（與 iid 重抽情境「L4 主抓」相反，誠實標記轉移）。鎖住攻擊面：若改成 L4 主抓或
+    # 宣稱單變數抓得到，本測試必失敗。
+    Xg, _, Xd, _ = _tp_campaigns()
+    hi = HealthIndex().fit(Xg)
+    pv = hi.fwer_pvalues(Xd)
+    assert pv["L2"] <= hi.config.fwer_alpha    # L2 SPE 抓到殘留飄移（主訊號）
+    assert pv["L4"] > hi.config.fwer_alpha     # L4 分數空間盲（保邊際 → window-vs-window 看不到）
+    gm, gs = Xg.mean(0), Xg.std(0) + 1e-9
+    assert (np.abs(Xd - gm) > 3 * gs).any(axis=1).mean() < 0.15  # 單變數 SPC 盲
