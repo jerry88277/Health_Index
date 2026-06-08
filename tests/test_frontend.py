@@ -18,6 +18,7 @@ from frontend.app import (  # noqa: E402
     ALARM,
     OK,
     build_contribution_figure,
+    build_fwer_figure,
     build_health_figure,
     build_softsensor_figure,
     build_spc_figure,
@@ -27,6 +28,7 @@ from frontend.app import (  # noqa: E402
     create_app,
     fetch_analysis,
     fetch_contribution,
+    fetch_fwer,
     fetch_series,
     fetch_softsensor,
     fetch_timeline,
@@ -215,3 +217,18 @@ def test_yhealth_figure_unavailable_on_synthetic():
 def test_layout_has_yhealth_graph():
     ids = _collect_ids(create_app().layout)
     assert "yhealth-graph" in ids
+
+
+def test_fwer_figure_discriminates_alarm():
+    # WHY（② /fwer 視圖）：AC-6 嚴格告警圖須真接 fwer_alarm 上色——drift(4) 紅、golden(0) 綠。
+    # 鎖住「不依 fwer_alarm 上色」這類喪失鑑別的假綠。
+    fw = fetch_fwer(None, dataset_id="synthetic", seed=5, drift_strength=1.2, client=client)
+    fig = build_fwer_figure(fw)
+    bar = fig.data[0]
+    colors = {c["campaign_id"]: bar.marker.color[i] for i, c in enumerate(fw["campaigns"])}
+    assert colors[4] == ALARM and colors[0] == OK
+
+
+def test_layout_has_fwer_graph():
+    ids = _collect_ids(create_app().layout)
+    assert "fwer-graph" in ids

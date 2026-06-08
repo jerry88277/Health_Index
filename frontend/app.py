@@ -75,6 +75,11 @@ def fetch_yhealth(base_url, *, dataset_id="synthetic", seed=5, drift_strength=1.
     return _post("/yhealth", _payload(dataset_id, seed, drift_strength), base_url, client)
 
 
+def fetch_fwer(base_url, *, dataset_id="synthetic", seed=5, drift_strength=1.2, client=None) -> dict:
+    """取後端 /fwer（per-campaign AC-6 嚴格告警；保時序情境隱性飄移的主偵測路徑）。"""
+    return _post("/fwer", _payload(dataset_id, seed, drift_strength), base_url, client)
+
+
 def _label(c: dict) -> str:
     return f"C{c['campaign_id']}·{c['grade']}" + ("*" if c["is_reentry"] else "")
 
@@ -248,6 +253,39 @@ def build_softsensor_figure(soft: dict) -> go.Figure:
     return fig
 
 
+_LAYER_NAME = {"L1": "資料效度", "L2": "製程關係偏移", "L4": "整體漂移"}
+
+
+def build_fwer_figure(fw: dict) -> go.Figure:
+    """⑧AC-6 嚴格告警：per-campaign Holm 單一決策點（紅=告警，標被判異常的層）。
+
+    保時序情境下隱性飄移由此偵測——融合 Health Index 受權重稀釋可能不過閾（drift≈0.85>0.6），但
+    AC-6（對 golden null Holm 校正，誤報率≤α）抓得到，且 ``rejected`` 標出是哪一層（多為 L2 製程關係偏移）。
+    """
+    camps = fw.get("campaigns", [])
+    if not camps:
+        fig = go.Figure()
+        fig.add_annotation(text="（無 AC-6 資料）", showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5)
+        fig.update_layout(title="⑧ AC-6 嚴格告警")
+        return fig
+
+    def lab(c: dict) -> str:
+        return f"C{c['campaign_id']}·{c['grade']}" + ("*" if c["is_reentry"] else "")
+
+    susp = [round(1.0 - min(c["pvalues"].values()), 3) for c in camps]  # 可疑度＝1−最小 p（高=可疑）
+    colors = [ALARM if c["fwer_alarm"] else OK for c in camps]
+    text = [
+        ("告警：" + "+".join(_LAYER_NAME.get(k, k) for k in c["rejected"])) if c["fwer_alarm"] else "正常"
+        for c in camps
+    ]
+    fig = go.Figure(go.Bar(x=[lab(c) for c in camps], y=susp, marker_color=colors, text=text, textposition="outside"))
+    fig.update_layout(
+        title="⑧ AC-6 嚴格告警（Holm 單一決策點；保時序隱性飄移由此抓，融合分數可能不過閾）",
+        yaxis=dict(range=[0, 1.18], title="可疑度（1−最小 p；越高越異常）"),
+    )
+    return fig
+
+
 def build_yhealth_figure(yh: dict) -> go.Figure:
     """⑦Y 分布健康：per-campaign 品質(G/H)分布 vs golden 的 Y-MSPC（紅=分布顯著偏離）。"""
     if not yh.get("available"):
@@ -323,6 +361,13 @@ _CAP_YHEALTH = (
     "（synthetic 為純量品質，此圖不適用。）"
 )
 
+_CAP_FWER = (
+    "嚴格告警(AC-6)：對『正常基準(golden)』做統計校正(Holm)，保證健康段誤報率 ≤5%。紅=告警並標出是哪一"
+    "層出問題(多為『製程關係偏移』L2)，綠=正常。* =換產品後回歸段。重點看『TEP(保時序)』資料集：殘留"
+    "飄移的回歸段(最後一段 A)在這裡會亮紅(L2 抓到)，但它的①總健康分數因多層平均稀釋可能沒掉到門檻下——"
+    "所以隱性飄移要以本圖(嚴格告警)為準，而非只看①。乾淨回歸段(前一段 A*)維持綠＝不誤報。"
+)
+
 
 # ---- 靜態說明區塊 ----
 
@@ -376,8 +421,9 @@ def _settings_card() -> html.Div:
                         options=[
                             {"label": "synthetic（合成示範）", "value": "synthetic"},
                             {"label": "TEP（真實連續製程＋注入隱性飄移）", "value": "tep"},
+                            {"label": "TEP（保時序：AC-6/L2 偵測，②）", "value": "tep_tp"},
                         ],
-                        value="synthetic", style={"width": "240px"},
+                        value="synthetic", style={"width": "260px"},
                     ),
                     html.Span("種子"),
                     dcc.Input(id="seed", type="number", value=5, min=0, step=1, style={"width": "80px"}),
@@ -452,6 +498,8 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
             html.P(_CAP_SOFT, style=_CAP),
             dcc.Graph(id="yhealth-graph"),
             html.P(_CAP_YHEALTH, style=_CAP),
+            dcc.Graph(id="fwer-graph"),
+            html.P(_CAP_FWER, style=_CAP),
             _glossary_card(),
         ],
         style={"maxWidth": "1100px", "margin": "0 auto", "fontFamily": "system-ui, sans-serif"},
@@ -465,6 +513,7 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
         Output("spc-graph", "figure"),
         Output("softsensor-graph", "figure"),
         Output("yhealth-graph", "figure"),
+        Output("fwer-graph", "figure"),
         Output("status", "children"),
         Output("monitored-params", "children"),
         Output("spc-variable", "options"),
@@ -485,7 +534,12 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
             yh = fetch_yhealth(base_url, dataset_id=dataset, seed=seed, drift_strength=drift)
         except Exception as exc:  # noqa: BLE001
             empty = go.Figure()
-            return empty, empty, empty, empty, empty, empty, empty, f"後端錯誤：{exc}", "（無法取得）", []
+            return empty, empty, empty, empty, empty, empty, empty, empty, f"後端錯誤：{exc}", "（無法取得）", []
+        try:  # AC-6 fwer 較重（permutation/block-bootstrap）→ 獨立 try，失敗不拖垮其餘圖
+            fw_fig = build_fwer_figure(fetch_fwer(base_url, dataset_id=dataset, seed=seed, drift_strength=drift))
+        except Exception as exc:  # noqa: BLE001
+            fw_fig = go.Figure()
+            fw_fig.add_annotation(text=f"AC-6 計算失敗：{exc}", showarrow=False, xref="paper", yref="paper", x=0.5, y=0.5)
         n_alarm = sum(c["is_alarm"] for c in analysis["campaigns"])
         status = f"共 {analysis['n_campaigns']} 段產品，{n_alarm} 段告警，換產品後回歸段＝{analysis['reentry_campaigns']}"
         vs = analysis.get("variables", [])
@@ -500,6 +554,7 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
             build_spc_figure(series, spc_var or (vs[0] if vs else "__all__")),
             build_softsensor_figure(soft),
             build_yhealth_figure(yh),
+            fw_fig,
             status,
             monitored,
             spc_opts,

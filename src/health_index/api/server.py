@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException
 
 from .. import __version__
 from ..adapters import synthetic as syn
-from ..health import HealthIndex, detect_reentry_campaigns
+from ..health import HealthIndex, _holm_reject, detect_reentry_campaigns
 from ..interface import CAMPAIGN_ID, GRADE_LABEL, MODE, Mode, ProcessDataset
 from ..preprocess import segment as seg
 from .schemas import (
@@ -34,6 +34,8 @@ from .schemas import (
     ContributionResponse,
     ContributionVar,
     DatasetInfo,
+    FwerCampaign,
+    FwerResponse,
     SeriesResponse,
     SoftSensorResponse,
     TimelineResponse,
@@ -50,9 +52,10 @@ app = FastAPI(title="Health_Index API", version=__version__)
 
 _DATASETS = {
     "synthetic": "合成連續製程（grade A→B→A→C→A，注入隱性飄移）",
-    "tep": "Tennessee Eastman 真實連續製程（Mode1/2/3 模態切換 + 注入隱性飄移）",
+    "tep": "Tennessee Eastman 真實連續製程（Mode1/2/3 模態切換 + 注入隱性飄移；iid 重抽）",
+    "tep_tp": "TEP（保時序）：連續不重抽、保真實自相關；隱性飄移由 AC-6/L2 SPE 偵測（②）",
 }
-_DATASET_NVARS = {"synthetic": 10, "tep": 22}
+_DATASET_NVARS = {"synthetic": 10, "tep": 22, "tep_tp": 22}
 
 
 @app.get("/health")
@@ -75,9 +78,13 @@ def _prepare(req: AnalyzeRequest):
     """
     if req.dataset_id not in _DATASETS:
         raise HTTPException(status_code=404, detail=f"未知資料集: {req.dataset_id}")
-    if req.dataset_id == "tep":
-        # TEP：drift_strength 為注入比例（0–1，打亂變數佔比）；clamp 上界
-        ds, gt = tep.generate(seed=req.seed, drift_strength=min(req.drift_strength, 1.0))
+    if req.dataset_id in ("tep", "tep_tp"):
+        # TEP：drift_strength 為注入比例（0–1，打亂變數佔比）；clamp 上界。tep_tp＝保時序（②）
+        ds, gt = tep.generate(
+            seed=req.seed,
+            drift_strength=min(req.drift_strength, 1.0),
+            time_preserving=(req.dataset_id == "tep_tp"),
+        )
     else:
         ds, gt = syn.generate(seed=req.seed, drift_strength=req.drift_strength)
     cols = list(ds.x_columns)
@@ -121,6 +128,38 @@ def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
         campaigns=campaigns,
         variables=cols,
     )
+
+
+@app.post("/fwer", response_model=FwerResponse)
+def fwer(req: AnalyzeRequest) -> FwerResponse:
+    """AC-6 單一決策點：per-campaign ``fwer_alarm``（Holm 校正 L1/L2/L4 對 golden null 的 p-value）。
+
+    為何獨立端點（非併入 /analyze）：fwer p-value 走 permutation/block-bootstrap，比融合分數重，獨立
+    端點避免拖慢 /analyze 熱路徑（Rule 6）。**保時序 TEP（tep_tp）情境的隱性飄移由此偵測**——融合
+    Health Index 受權重稀釋可能不過閾（drift HI≈0.85>0.6），但 AC-6/L2 SPE 抓得到；前端據此誠實標示，
+    避免「融合分數沒掉＝沒抓到」的誤讀。
+    """
+    _ds, _gt, fr, ds_seg, cols, hi = _prepare(req)
+    reentry = detect_reentry_campaigns(ds_seg)
+    alpha = hi.config.fwer_alpha
+    camps: list[FwerCampaign] = []
+    for cid in sorted(int(c) for c in fr[CAMPAIGN_ID].unique()):
+        sub = fr[(fr[CAMPAIGN_ID] == cid) & (fr[MODE] == Mode.STEADY.value)]
+        if sub.empty:
+            continue
+        pv = hi.fwer_pvalues(sub[cols].to_numpy())
+        rej = _holm_reject(pv, alpha)
+        camps.append(
+            FwerCampaign(
+                campaign_id=cid,
+                grade=str(sub[GRADE_LABEL].iloc[0]),
+                is_reentry=cid in reentry,
+                fwer_alarm=any(rej.values()),
+                pvalues={k: round(float(v), 4) for k, v in pv.items()},
+                rejected=[k for k, r in rej.items() if r],
+            )
+        )
+    return FwerResponse(dataset_id=req.dataset_id, alpha=alpha, campaigns=camps)
 
 
 def _health_band(hi, X, *, B: int = 10, seed: int = 0) -> tuple[float, float]:
