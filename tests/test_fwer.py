@@ -105,3 +105,41 @@ def test_fwer_deterministic():
     hi = HealthIndex().fit(Xg)
     assert hi.fwer_alarm(Xd) == hi.fwer_alarm(Xd)
     assert hi.fwer_pvalues(Xd) == hi.fwer_pvalues(Xd)
+
+
+# --- ① block-aware L2 FWER：消自相關 in-sample 過度拒絕 ---
+def _ar1(n, phi, rng, p=1):
+    x = np.zeros((n, p))
+    for t in range(1, n):
+        x[t] = phi * x[t - 1] + np.sqrt(1 - phi**2) * rng.standard_normal(p)
+    return x
+
+
+def test_l2_block_window_pvalue_controls_autocorr_fp_keeps_power():
+    # marquee WHY（①）：自相關序列下，window-vs-window 區塊 p-value 對**同分佈 in-sample 窗**的 FP≈名目，
+    # 而 permutation（假 iid，mutant）顯著**過度拒絕**；對位移窗仍顯著（功效不犧牲）。鎖住 ② 揭露的
+    # L2 既有債之修正——若把 L2 退回純 permutation，in-sample FWER 失控（實測 0.22≫α）。
+    hi = HealthIndex()
+    rng = np.random.default_rng(0)
+    g = _ar1(6000, 0.9, rng).ravel()
+    s = 300
+    starts = list(range(0, 6000 - s, 120))
+    block_fp = float(np.mean([hi._block_window_pvalue(g, g[a : a + s].mean(), s) <= 0.05 for a in starts]))
+    ref = g[3000:4000]
+    perm_fp = float(np.mean([hi._perm_two_sample(ref, g[a : a + s]) <= 0.05 for a in starts]))
+    assert block_fp <= 0.12                 # 區塊化：FP 受控 ≈名目（實測 0.062）
+    assert perm_fp > block_fp + 0.08        # permutation 假 iid → 過度拒絕（實測 0.167；殺「不修」mutant）
+    assert hi._block_window_pvalue(g, g.mean() + 3 * g.std(), s) <= 0.05  # 位移窗仍顯著（功效）
+
+
+def test_l2_fwer_block_active_only_under_autocorrelation():
+    # WHY（向後相容不變式）：iid golden（synthetic）→ L2 維 permutation（_fwer_l2_block_=False，逐位元
+    # 相容既有 fwer 測試）；自相關 golden → 切 window-vs-window 區塊路徑（_fwer_l2_block_=True）。
+    hi_iid = HealthIndex().fit(_gcd(5)[0])   # synthetic（iid）
+    hi_iid.fwer_pvalues(_gcd(5)[2])          # 觸發 lazy 校準
+    assert hi_iid._fwer_l2_block_ is False
+    rng = np.random.default_rng(1)
+    ar = _ar1(800, 0.9, rng, p=6)            # 強自相關多變量 golden
+    hi_ac = HealthIndex().fit(ar)
+    hi_ac.fwer_pvalues(ar[:200])
+    assert hi_ac._fwer_l2_block_ is True

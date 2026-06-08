@@ -29,7 +29,15 @@ def test_datasets_lists_synthetic_and_tep():
     r = client.get("/datasets")
     assert r.status_code == 200
     ids = [d["id"] for d in r.json()]
-    assert "synthetic" in ids and "tep" in ids
+    assert "synthetic" in ids and "tep" in ids and "tep_tp" in ids  # ② 保時序選項
+
+
+def test_fwer_endpoint_synthetic_discriminates():
+    # WHY（② /fwer）：AC-6 per-campaign 經 HTTP——drift 告警、golden 不告警（單一決策點）
+    d = client.post("/fwer", json={"dataset_id": "synthetic", "seed": 5, "drift_strength": 1.2}).json()
+    camps = {c["campaign_id"]: c for c in d["campaigns"]}
+    assert camps[4]["fwer_alarm"] is True and camps[0]["fwer_alarm"] is False
+    assert d["alpha"] == 0.05
 
 
 _TEP_DATA = os.path.join("data", "tep", "m1d00.mat")
@@ -48,6 +56,18 @@ def test_tep_through_api_marquee():
     assert camps[4]["health_index"] < camps[2]["health_index"] - 0.2
     assert data["reentry_campaigns"] == [2, 4]
     assert len(data["variables"]) == 22                            # XMEAS1-22
+
+
+@pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
+def test_tep_tp_fwer_clean_healthy_drift_caught_via_l2():
+    # marquee WHY（② 前端路徑）：保時序 TEP 經 /fwer——乾淨連續回歸不誤報、殘留飄移由 **L2** 偵測。
+    # 融合 HI（/analyze）受權重稀釋 drift 可能不過閾，故前端以 /fwer 為隱性飄移的主偵測依據。
+    d = client.post("/fwer", json={"dataset_id": "tep_tp", "seed": 0, "drift_strength": 0.7}).json()
+    camps = {c["campaign_id"]: c for c in d["campaigns"]}
+    assert camps[0]["fwer_alarm"] is False                       # golden 健康
+    assert camps[2]["fwer_alarm"] is False                       # 乾淨連續回歸不誤報（① block-aware L2）
+    assert camps[4]["fwer_alarm"] is True                        # 殘留隱性飄移被偵測
+    assert "L2" in camps[4]["rejected"]                          # 由 L2 製程關係偏移抓（② 歸因）
 
 
 @pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")

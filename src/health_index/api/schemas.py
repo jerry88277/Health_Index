@@ -123,3 +123,22 @@ class SoftSensorResponse(BaseModel):
     band_kind: str                  # "CP" 或 "GPR_std"（誠實標可信帶來源）
     y_delay_steps: int = 0          # 估計 X→Y 延遲步數（0=資料列對齊/無可復原延遲，映射以 X(t−d) 訓練）
     campaigns: list[CampaignSpan]
+
+
+class FwerCampaign(BaseModel):
+    """單一 campaign 的 AC-6 決策（Holm over L1/L2/L4 對 golden null 的 p-value）。"""
+
+    campaign_id: int
+    grade: str
+    is_reentry: bool
+    fwer_alarm: bool          # AC-6 單一決策點：family 內任一層拒絕虛無即告警
+    pvalues: dict[str, float] # 各層 p-value（L1/L2/L4；越小越異常）
+    rejected: list[str]       # Holm 校正後被拒絕（判異常）的層
+
+
+class FwerResponse(BaseModel):
+    """AC-6 per-campaign fwer_alarm（保時序情境下隱性飄移的主偵測路徑；融合 HI 可能不過閾）。"""
+
+    dataset_id: str
+    alpha: float
+    campaigns: list[FwerCampaign]

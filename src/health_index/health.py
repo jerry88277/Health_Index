@@ -57,15 +57,18 @@ class HealthIndex:
         n = len(G)
         ncal = n // 3
         mind = self.config.min_samples_per_dim
+        # 自相關 golden（連續 TEP，drift_.block_len_>1）→ L2/L4 改 window-vs-window 自校準（消 permutation
+        # 假 iid 的過度拒絕）；iid（synthetic，=1）→ 維原 split + permutation（統計等價向後相容）。
+        self._fwer_l2_block_ = self.drift_.block_len_ > 1
         if ncal >= mind and (n - ncal) >= 2 * mind:
             perm = np.random.default_rng(self.config.random_state).permutation(n)
             self._fwer_cal_ = G[perm[:ncal]]
             gfit = G[perm[ncal:]]
             self._fwer_dqi_ = DQIxGate(self.config).fit(gfit)
-            self._fwer_mspc_ = MSPCModel(self.config).fit(gfit)
-            # L4 的 p-value **本即自校準**（mmd_pvalue 的 null 取自自身 golden 分數，不用 calib split，
-            # 見 fwer_pvalues docstring）→ fit 於 **保序全 golden**（非 shuffled gfit），維 block-bootstrap
-            # 的時序：否則 shuffle 毀自相關 → block_len_=1 → 退回 vs-pool MMD → 連續乾淨回歸誤報（②）。
+            # L2/L4 的 p-value **本即自校準**（null 取自自身 golden 連續窗，不用 calib split）→ 自相關時
+            # fit 於 **保序全 golden**（非 shuffled gfit），維 block-bootstrap 時序：否則 shuffle 毀自相關 →
+            # 退回假 iid null → 連續乾淨回歸誤報（②的 L4 與本次的 L2）。iid 時 L2 維 split gfit（向後相容）。
+            self._fwer_mspc_ = MSPCModel(self.config).fit(G if self._fwer_l2_block_ else gfit)
             self._fwer_drift_ = DriftDetector(self.config).fit(G)
             self._fwer_split_ = True
         else:
@@ -114,11 +117,10 @@ class HealthIndex:
         各層用 permutation 兩樣本，使 p-value 在 golden null 下近似 uniform（不受 in-sample 控制限低估
         之累，紅隊 N6）：
         - **L1**：離域指標比例（golden_calib vs X；離散低計數，此 synthetic 下近乎無功效＝恆保守）。
-        - **L2**：每樣本 **SPE 均值**（golden_calib vs X；連續統計量，比 0/1 失控率更平滑有力——隱性飄移主訊號）。
-          誠實標（紅隊，②時序情境暴露的既有限制）：``_perm_two_sample`` 的 permutation null 假設 cal/X 可
-          交換；自相關連續窗的 SPE 有效樣本數 ≪ 窗長 → null 略偏不保守。實測 AC-6 族系誤報率對 **disjoint
-          held-out re-entry 窗**（生產情境）受控 ≈0.04–0.05；對人造 **in-sample 子窗** 可達 ~0.08（>α）。
-          屬 L2 permutation 既有性質（非 ② L4 改動引入），block-aware L2 列後續。
+        - **L2**：每樣本 **SPE 均值**——雙路（block-aware，消自相關 in-sample 過度拒絕）：iid（block_len_=1）
+          用 ``_perm_two_sample``（golden_calib vs X）；自相關（連續 TEP）改 ``_block_window_pvalue``
+          window-vs-window（null=golden 連續窗 SPE 均值，自校準）。實測 in-sample FP@.05 由 0.22 回落
+          ≈0.058（名目）、drift 仍抓。隱性飄移主訊號。
         - **L4**：``DriftDetector.mmd_pvalue``（②後改 window-vs-window block-bootstrap；fit 於**保序全 golden**，
           本即自校準 p-value，為三層中**唯一未用 calib split**者。紅隊實測 L4 golden 誤報率 0.000，含 in-sample）。
 
@@ -134,11 +136,34 @@ class HealthIndex:
         p1 = self._perm_two_sample(out_c, out_x)
         # L2：每樣本 SPE 均值（連續統計量；隱性飄移主訊號）
         spe_x = self._fwer_mspc_.spe(X)
-        spe_c = self._fwer_mspc_.spe(cal)
-        p2 = self._perm_two_sample(spe_c, spe_x)
+        if self._fwer_l2_block_:  # 自相關：window-vs-window 區塊化 null（消 in-sample 過度拒絕）
+            spe_g = self._fwer_mspc_.spe(self._golden_)  # 保序 golden 逐樣本 SPE
+            p2 = self._block_window_pvalue(spe_g, float(np.mean(spe_x)), len(X))
+        else:                     # iid：原 permutation 兩樣本（向後相容）
+            p2 = self._perm_two_sample(self._fwer_mspc_.spe(cal), spe_x)
         # L4：MMD block-permutation（PCA 分數空間）
         p4 = float(self._fwer_drift_.mmd_pvalue(X))
         return {"L1": float(p1), "L2": float(p2), "L4": p4}
+
+    def _block_window_pvalue(self, golden_series: np.ndarray, obs_mean: float, s: int) -> float:
+        """window-vs-window 區塊化單尾 p-value：null=golden **連續窗**的統計量均值分佈，obs=X 窗均值。
+
+        WHY（紅隊②揭露的 L2 既有債）：permutation 兩樣本假設逐樣本可交換；自相關連續窗的 SPE 有效
+        樣本數 ≪ 窗長 → permutation null 低估窗均值變異 → in-sample 過度拒絕（實測 FP@.05=0.22≫α）。
+        改抽 golden **連續窗**建 null（窗級含同序列相依）→ FP 回落 ≈名目（實測 0.058）；drift 仍抓
+        （SPE 均值遠高於 golden 窗 → obs≫null → p≈0）。s=X 窗長（block＝整窗，與 L4 window-vs-window 同構）。
+
+        Args: golden_series: 保序 golden 逐樣本統計量（如 SPE）；obs_mean: X 窗統計量均值；s: X 窗長。
+        Returns: 右尾 p∈(0,1]（越小越異常）。
+        """
+        g = np.asarray(golden_series, dtype=float)
+        n = len(g)
+        s = min(int(s), n)
+        rng = np.random.default_rng(self.config.random_state)
+        starts = rng.integers(0, n - s + 1, size=self.config.fwer_n_boot)
+        null = np.array([g[a0 : a0 + s].mean() for a0 in starts])
+        count = int((null >= obs_mean).sum())
+        return (1 + count) / (self.config.fwer_n_boot + 1)
 
     def _perm_two_sample(self, ref: np.ndarray, new: np.ndarray) -> float:
         """單尾 permutation 兩樣本檢定：H1＝new 的均值 > ref（越異常越大）。
