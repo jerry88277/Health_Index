@@ -196,6 +196,8 @@ def test_softsensor_figure_has_yhat_y_and_band():
     names = {t.name for t in fig.data if t.name}
     assert "預測 Ŷ" in names and "實際 Y" in names
     assert any("可信帶" in (t.name or "") for t in fig.data)
+    # ③ X→Y 延遲對齊狀態須標示於圖上（synthetic 列對齊 → 顯示「估計 0 步」）
+    assert any("延遲對齊" in (a.text or "") for a in fig.layout.annotations)
 
 
 def test_layout_has_softsensor_graph():

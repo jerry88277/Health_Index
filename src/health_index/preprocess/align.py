@@ -58,6 +58,32 @@ def estimate_delay(X: np.ndarray, y: np.ndarray, *, max_lag: int = 10) -> int:
     return best_d
 
 
+def delay_align_train(X: np.ndarray, y: np.ndarray, d: int) -> tuple[np.ndarray, np.ndarray]:
+    """建延遲對齊的軟測量訓練對：以 X(t−d) 配 Y(t)（真映射 Y(t)=f(X(t−d))）。
+
+    Args:
+        X: (n, p) 位置序列製程參數（時間序，列＝時刻）。
+        y: (n,) 稀疏 lab 量測，未觀測處為 NaN。
+        d: 延遲步數（≥0）；d=0 等同無對齊（退化為原行為，不改變既有路徑）。
+
+    Returns:
+        (X_tr, y_tr)：僅含 y 有觀測且 t−d≥0 的列，X_tr=X[obs−d]、y_tr=y[obs]（皆 dense）。
+
+    WHY（Rule 9）：估出的延遲若不落實到訓練對，等於以錯位 (X, Y) 訓練 → X→Y 映射被污染
+    （見模組 docstring）。此函式把 d 實作成訓練對；「延遲估出卻沒用」的假綠由 test 擊殺。
+
+    不變式（紅隊 B#3）：X 須為**單一連續時段**的位置序列（如單一 golden campaign）。``X[obs−d]`` 為
+    位置索引，若 X 跨多個不連續時段拼接，d>0 會在接縫處把後段 Y 配到前段 X——呼叫端須確保連續性
+    （現行 adapter 的 golden 皆單一連續塊）。
+    """
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    obs = np.flatnonzero(np.isfinite(y))
+    if d > 0:
+        obs = obs[obs - d >= 0]
+    return X[obs - d], y[obs]
+
+
 def add_y_delay(dataset: ProcessDataset, *, config: Config = DEFAULT) -> pd.DataFrame:
     """估計全域 X→Y 延遲並加入 Y_DELAY 衍生欄（常數），回傳**新** frame（不改原 frame）。"""
     fr = dataset.frame.copy()

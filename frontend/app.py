@@ -230,7 +230,21 @@ def build_softsensor_figure(soft: dict) -> go.Figure:
             x=(s["start"] + s["end"]) / 2, y=1.02, yref="paper", showarrow=False,
             text=f"C{s['campaign_id']}·{s['grade']}",
         )
-    fig.update_layout(title="⑥ 量測值：預測 Ŷ vs 實際 Y（含可信帶）", xaxis_title="時間（樣本序）", yaxis_title="量測值 Y")
+    d = soft.get("y_delay_steps", 0)
+    delay_txt = (
+        # 誠實標：0 是「此資料集列對齊」的性質，非對真實產線輸送延遲的量測結果（Rule 12）
+        "X→Y 延遲對齊：本資料估計 0 步（此資料集量測與製程列對齊；真實產線若有輸送延遲會估出 N 步並自動校正）"
+        if d == 0
+        else f"X→Y 延遲對齊：估計 {d} 步（已以 X(t−{d}) 訓練映射，避免錯位污染）"
+    )
+    fig.add_annotation(
+        x=0.0, y=1.14, xref="paper", yref="paper", showarrow=False, align="left",
+        text=delay_txt, font=dict(size=12, color="#555"),
+    )
+    fig.update_layout(
+        title="⑥ 量測值：預測 Ŷ vs 實際 Y（含可信帶）", xaxis_title="時間（樣本序）", yaxis_title="量測值 Y",
+        margin=dict(t=96),  # 留頂部空間給延遲對齊註記，避免與標題/campaign 標籤擠壓（紅隊 B#1）
+    )
     return fig
 
 

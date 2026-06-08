@@ -30,7 +30,11 @@ golden A（Mode1）→ B（Mode3，G/H≈90/10）→ 乾淨回歸 A（Mode1）�
 （Mode1 + 注入關係飄移）。
 
 X/Y：X＝XMEAS1-22（製程感測器）；Y＝產品成分 G/H（XMEAS40/41＝cols 39/40，稀疏抽樣模擬實驗室
-量測，X→Y 延遲 2h 交 ``preprocess.align`` 估計）。輸出與 ``synthetic.generate`` 同契約，既有端點可直接吃。
+量測）。X→Y 延遲交 ``preprocess.align.estimate_delay`` 估計：**本情境 (X, Y) 取自 seg 同列（同時刻），
+本就列對齊，無可復原延遲**；且預設稀疏標籤 common obs < 2p+1 低於估計器可靠下限，故回保守 fallback 0
+（非 argmax 證得——詳 server.softsensor docstring）。使用者原想要的「2h 物理延遲」在此半合成、列對齊資料上
+**無法復原**（誠實標 Rule 12，不偽造）；對齊機制備妥，真實有延遲的產線資料插入即會估出 d>0 並校正訓練。
+輸出與 ``synthetic.generate`` 同契約，既有端點可直接吃。
 """
 
 from __future__ import annotations

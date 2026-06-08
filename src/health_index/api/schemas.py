@@ -121,4 +121,5 @@ class SoftSensorResponse(BaseModel):
     y_actual: list                  # 實際 Y（有觀測處為 float，否則 None）
     cp_available: bool              # 是否以 Conformal Prediction 可信帶（標籤足量）
     band_kind: str                  # "CP" 或 "GPR_std"（誠實標可信帶來源）
+    y_delay_steps: int = 0          # 估計 X→Y 延遲步數（0=資料列對齊/無可復原延遲，映射以 X(t−d) 訓練）
     campaigns: list[CampaignSpan]

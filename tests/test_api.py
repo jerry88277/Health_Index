@@ -246,6 +246,8 @@ def test_softsensor_yhat_deviates_from_y_in_drift():
 
     assert mae(4) > mae(0) * 2          # drift 段預測誤差遠大於 golden（量測層飄移）
     assert d["band_kind"] in ("CP", "GPR_std")
+    # ③ X→Y 延遲對齊：synthetic (X,Y) 同時刻列對齊 → 估計延遲 0（誠實：無可復原延遲）
+    assert d["y_delay_steps"] == 0
 
 
 def test_softsensor_unknown_dataset_404():

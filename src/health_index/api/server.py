@@ -44,6 +44,7 @@ from ..adapters import tep
 from ..detectors.mspc import MSPCModel
 from ..detectors.soft_sensor import SoftSensor
 from ..interface import Y_VALUE
+from ..preprocess.align import delay_align_train, estimate_delay
 
 app = FastAPI(title="Health_Index API", version=__version__)
 
@@ -140,12 +141,29 @@ def softsensor(req: AnalyzeRequest) -> SoftSensorResponse:
     可信帶：標籤足量時用 Conformal Prediction（有限樣本覆蓋保證）；標籤稀少（synthetic Y 稀疏，
     < cp_min_calibration）則退回 2×GPR 後驗 std，並以 band_kind 誠實標來源（紅隊 H1 雙路）。
     用途：drift 段 X→Y 映射偏移 → Ŷ 偏離實際 Y、落出可信帶＝量測值層飄移 / Ŷ 不可信。
+
+    X→Y 延遲對齊（③）：lab 量測 Y 相對製程 X 常有輸送/分析延遲，先以 ``estimate_delay`` 自 golden
+    估計延遲 d，再以 ``delay_align_train`` 取 (X(t−d), Y(t)) 對訓練 GPR——避免錯位污染映射（Rule 9）。
+    估計 d 回報於 ``y_delay_steps``（前端 ⑥ 圖標示）。
+
+    誠實標（Rule 12，d=0 的兩種來源不可混淆）：
+      - synthetic：golden 標籤數足（common obs ≥ 2p+1），estimate_delay **真跑 R² argmax** 得 d=0
+        （X、Y 同時刻由共同潛變數生成，本就列對齊）。
+      - tep（預設 n_per_campaign）：golden 稀疏標籤 common obs < 2p+1，低於 estimate_delay 可靠下限，
+        故回**保守 fallback 0**（非 argmax 證得；與「seg 同列取 X 與 G/H」的列對齊一致，但屬「資料不足
+        放棄」而非「搜尋後確認無延遲」）。增大 n_per_campaign/降稀疏度可使其轉為真 argmax（亦得 0）。
+    預測路徑：d=0 時 Ŷ(t)=f(X(t)) 與訓練域一致（精確）；若未來真實資料 d>0，此處仍以 X(t) 預測，
+    Ŷ(t) 實際估計的是 Y(t+d)（latent 不一致，屆時須對齊預測域）——目前 d=0 不觸發。
     """
     _ds, gt, fr, _ds_seg, cols, hi = _prepare(req)
     Xg = _ds.frame.loc[gt.golden_mask, cols].to_numpy()
     yg = _ds.frame.loc[gt.golden_mask, Y_VALUE].to_numpy()
-    ss = SoftSensor(hi.config).fit(Xg, yg)
-    ss.calibrate_cp(Xg, yg)
+    d = estimate_delay(Xg, yg, max_lag=hi.config.y_max_lag)  # X→Y 延遲（步）；列對齊/標籤不足回 0
+    # 不變式：estimate_delay 僅在 common obs ≥ 2p+1（且 obs−max_lag≥0）時回 d>0，而 d≤max_lag，
+    # 故 delay_align_train 對齊後留存 obs ≥ common ≥ 2p+1 ≥ 2，fit 不會因觀測不足拋例外。
+    Xg_al, yg_al = delay_align_train(Xg, yg, d)              # (X(t−d), Y(t)) 對齊訓練對
+    ss = SoftSensor(hi.config).fit(Xg_al, yg_al)
+    ss.calibrate_cp(Xg_al, yg_al)
 
     X = fr[cols].to_numpy()
     yhat, std = ss.predict(X, return_std=True)
@@ -164,6 +182,7 @@ def softsensor(req: AnalyzeRequest) -> SoftSensorResponse:
         y_actual=[None if not np.isfinite(v) else round(float(v), 4) for v in y_actual],
         cp_available=ss.cp_available,
         band_kind=kind,
+        y_delay_steps=int(d),
         campaigns=spans,
     )
 
