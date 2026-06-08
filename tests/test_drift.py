@@ -114,3 +114,37 @@ def test_mmd_pvalue_deterministic():
     Xg, Xc, Xd = _campaigns(5)
     det = DriftDetector().fit(Xg)
     assert det.mmd_pvalue(Xd) == det.mmd_pvalue(Xd)  # 固定 random_state → 決定性
+
+
+# --- ② block-bootstrap：非平穩/自相關下的 L4 null 穩健化 ---
+def _ar1(n, p, phi, rng):
+    """AR(1) 強自相關序列（模擬連續製程慢漂移；phi 越大自相關越長）。"""
+    X = np.zeros((n, p))
+    X[0] = rng.standard_normal(p)
+    for t in range(1, n):
+        X[t] = phi * X[t - 1] + np.sqrt(1 - phi**2) * rng.standard_normal(p)
+    return X
+
+
+def test_block_len_iid_is_one_autocorr_gt_one():
+    # WHY（②向後相容不變式）：iid → ℓ=1（下游退回原 iid null，逐位元相容）；強自相關 → ℓ>1
+    # （觸發 block 路徑加寬 null）。此不變式是「synthetic 全綠 + 連續 TEP 修好」並存的關鍵。
+    rng = np.random.default_rng(0)
+    assert DriftDetector().fit(rng.standard_normal((1000, 5))).block_len_ == 1
+    assert DriftDetector().fit(_ar1(3000, 5, 0.92, rng)).block_len_ > 1
+
+
+def test_block_bootstrap_no_false_alarm_on_autocorr_clean_still_catches_shift():
+    # marquee WHY（②核心）：自相關 golden 下，乾淨同過程窗**不誤報**、真分佈位移**仍抓**。
+    # 且鎖 mutant：強制 block_len_=1（退回 iid vs-pool null）→ 乾淨窗即誤報（證 block-bootstrap 必要）。
+    rng = np.random.default_rng(1)
+    det = DriftDetector().fit(_ar1(3000, 5, 0.92, rng))
+    assert det.block_len_ > 1
+    clean = _ar1(300, 5, 0.92, rng)             # 同過程不同實現（自然自相關變異）
+    shifted = _ar1(300, 5, 0.92, rng) + 3.0     # 真分佈位移（換操作點）
+    a = det.config.mspc_alpha
+    assert det.mmd_pvalue(clean) > a            # 乾淨連續窗不被判漂移（block null 吸收自相關）
+    assert det.mmd_pvalue(shifted) <= a         # 真位移仍被判漂移（保鑑別力）
+    assert abs(det.wasserstein_magnitude(clean)) < det.wasserstein_magnitude(shifted)
+    det.block_len_ = 1                          # mutant：退回 iid vs-pool null
+    assert det.mmd_pvalue(clean) <= a           # → 乾淨窗誤報（證 ② 修正之必要性）

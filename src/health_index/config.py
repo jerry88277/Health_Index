@@ -49,6 +49,9 @@ class Config:
     sinkhorn_eps: float = 0.1       # Sinkhorn 熵正則 ε；小→保 OT 幾何但貴/樣本需求大（紅隊 F2）
     perm_B: int = 200               # permutation 重抽次數（影響 p-value 解析度 1/(B+1)）
     w_null_reps: int = 50           # Wasserstein 量級 null 的重抽次數（紅隊建議 ≥50）
+    drift_block_z: float = 1.96     # L4 block-bootstrap 區塊長度估計的自相關顯著帶（PC1 ρ<z/√n→iid）；
+                                    # iid 資料 → 區塊長度 1（統計等價向後相容，≈95% 走 iid 路徑）；
+                                    # 強自相關（連續 TEP）→ >1 加寬 null
     drift_persistence_k: int = 2    # 連續 k 窗超標才告警，濾單點 outlier（預留，M9 接線；M6 未使用）
 
     # --- L5 批次軌跡 DTW（B4）---
