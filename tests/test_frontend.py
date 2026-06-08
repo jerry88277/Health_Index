@@ -23,12 +23,14 @@ from frontend.app import (  # noqa: E402
     build_spc_figure,
     build_subscore_figure,
     build_timeline_figure,
+    build_yhealth_figure,
     create_app,
     fetch_analysis,
     fetch_contribution,
     fetch_series,
     fetch_softsensor,
     fetch_timeline,
+    fetch_yhealth,
 )
 from health_index.api.server import app as api_app  # noqa: E402
 from health_index.config import DEFAULT  # noqa: E402
@@ -199,3 +201,15 @@ def test_softsensor_figure_has_yhat_y_and_band():
 def test_layout_has_softsensor_graph():
     ids = _collect_ids(create_app().layout)
     assert "softsensor-graph" in ids
+
+
+def test_yhealth_figure_unavailable_on_synthetic():
+    # synthetic 純量品質 → ⑦圖顯示「不適用」（不誤導為有 Y 分布健康）
+    yh = fetch_yhealth(None, dataset_id="synthetic", seed=5, drift_strength=1.2, client=client)
+    fig = build_yhealth_figure(yh)
+    assert "不適用" in fig.layout.title.text
+
+
+def test_layout_has_yhealth_graph():
+    ids = _collect_ids(create_app().layout)
+    assert "yhealth-graph" in ids

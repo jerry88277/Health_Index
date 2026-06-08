@@ -70,6 +70,11 @@ def fetch_softsensor(base_url, *, dataset_id="synthetic", seed=5, drift_strength
     return _post("/softsensor", _payload(dataset_id, seed, drift_strength), base_url, client)
 
 
+def fetch_yhealth(base_url, *, dataset_id="synthetic", seed=5, drift_strength=1.2, client=None) -> dict:
+    """取後端 /yhealth（per-campaign Y 分布健康；Y-MSPC）。"""
+    return _post("/yhealth", _payload(dataset_id, seed, drift_strength), base_url, client)
+
+
 def _label(c: dict) -> str:
     return f"C{c['campaign_id']}·{c['grade']}" + ("*" if c["is_reentry"] else "")
 
@@ -229,6 +234,30 @@ def build_softsensor_figure(soft: dict) -> go.Figure:
     return fig
 
 
+def build_yhealth_figure(yh: dict) -> go.Figure:
+    """⑦Y 分布健康：per-campaign 品質(G/H)分布 vs golden 的 Y-MSPC（紅=分布顯著偏離）。"""
+    if not yh.get("available"):
+        fig = go.Figure()
+        fig.add_annotation(text=yh.get("note", "此資料集為純量品質，Y 分布健康需多維品質"),
+                           showarrow=False, font=dict(size=14), xref="paper", yref="paper", x=0.5, y=0.5)
+        fig.update_layout(title="⑦ Y 分布健康（此資料集不適用：需多維品質如 G/H）")
+        return fig
+    camps = yh["campaigns"]
+    colors = [ALARM if c["y_flagged"] else OK for c in camps]
+    fig = go.Figure(
+        go.Bar(
+            x=[f"C{c['campaign_id']}·{c['grade']}" + ("*" if c["is_reentry"] else "") for c in camps],
+            y=[c["y_health"] for c in camps], marker_color=colors,
+            text=[f"{c['y_health']:.2f}" for c in camps], textposition="outside",
+        )
+    )
+    fig.update_layout(
+        title="⑦ Y 分布健康（品質 G/H 分布 vs golden；紅=分布顯著偏離）",
+        yaxis=dict(range=[0, 1.05], title="Y 分布健康（1=健康）"),
+    )
+    return fig
+
+
 # ---- 圖表下方白話說明 ----
 
 _CAP = {"color": "#555", "fontSize": "14px", "margin": "2px 0 14px 0"}
@@ -271,6 +300,13 @@ _CAP_SOFT = (
     "在 golden/乾淨段 Ŷ 貼著實際 Y；到飄移段，X→Y 的映射已偏移，Ŷ 會偏離實際 Y、實際 Y 落出可信帶"
     "＝量測值層也飄移、Ŷ 不可信。可信帶來源：標籤足量時用 Conformal Prediction（覆蓋保證）；本合成資料"
     "標籤稀疏（<200）故退回 GPR 後驗 std（圖例標 GPR_std）。"
+)
+_CAP_YHEALTH = (
+    "品質(Y)的『分布』本身有沒有偏移：用 G/H 多變量管制(T²/SPE)比這段品質分布 vs golden。"
+    "換產品(B/C)因 G/H 比例不同會被強烈旗標(正常——產品真的不一樣)；但注入飄移的回歸段(最後一段 A)"
+    "其 Y 分布幾乎不變→這裡不旗標。對照 ⑥：飄移段正是『品質測量看似正常、但 X→Y 關係已斷』的隱蔽"
+    "案例——⑦(Y 分布)看不到、⑥(軟測量映射)才抓得到。兩者互補：⑦看品質變沒變、⑥看關係斷沒斷。"
+    "（synthetic 為純量品質，此圖不適用。）"
 )
 
 
@@ -400,6 +436,8 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
             html.P(_CAP_SPC, style=_CAP),
             dcc.Graph(id="softsensor-graph"),
             html.P(_CAP_SOFT, style=_CAP),
+            dcc.Graph(id="yhealth-graph"),
+            html.P(_CAP_YHEALTH, style=_CAP),
             _glossary_card(),
         ],
         style={"maxWidth": "1100px", "margin": "0 auto", "fontFamily": "system-ui, sans-serif"},
@@ -412,6 +450,7 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
         Output("timeline-graph", "figure"),
         Output("spc-graph", "figure"),
         Output("softsensor-graph", "figure"),
+        Output("yhealth-graph", "figure"),
         Output("status", "children"),
         Output("monitored-params", "children"),
         Output("spc-variable", "options"),
@@ -429,9 +468,10 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
             contrib = fetch_contribution(base_url, dataset_id=dataset, seed=seed, drift_strength=drift)
             series = fetch_series(base_url, dataset_id=dataset, seed=seed, drift_strength=drift)
             soft = fetch_softsensor(base_url, dataset_id=dataset, seed=seed, drift_strength=drift)
+            yh = fetch_yhealth(base_url, dataset_id=dataset, seed=seed, drift_strength=drift)
         except Exception as exc:  # noqa: BLE001
             empty = go.Figure()
-            return empty, empty, empty, empty, empty, empty, f"後端錯誤：{exc}", "（無法取得）", []
+            return empty, empty, empty, empty, empty, empty, empty, f"後端錯誤：{exc}", "（無法取得）", []
         n_alarm = sum(c["is_alarm"] for c in analysis["campaigns"])
         status = f"共 {analysis['n_campaigns']} 段產品，{n_alarm} 段告警，換產品後回歸段＝{analysis['reentry_campaigns']}"
         vs = analysis.get("variables", [])
@@ -445,6 +485,7 @@ def create_app(base_url: str = DEFAULT_API) -> Dash:
             build_timeline_figure(timeline),
             build_spc_figure(series, spc_var or (vs[0] if vs else "__all__")),
             build_softsensor_figure(soft),
+            build_yhealth_figure(yh),
             status,
             monitored,
             spc_opts,

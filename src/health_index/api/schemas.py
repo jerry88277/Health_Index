@@ -92,6 +92,26 @@ class SeriesResponse(BaseModel):
     campaigns: list[CampaignSpan]
 
 
+class YHealthCampaign(BaseModel):
+    """單一 campaign 的 Y 分布健康（Y-MSPC：T²/SPE on 品質 Y）。"""
+
+    campaign_id: int
+    grade: str
+    is_reentry: bool
+    y_health: float       # 1−Y 異常率（1=Y 分布健康）
+    y_flagged: bool       # Y 分布是否顯著偏離 golden（如換產品 G/H 比例變）
+
+
+class YHealthResponse(BaseModel):
+    """Y 分布健康（Y-MSPC）。多維品質才有意義；純量品質資料集 available=False。"""
+
+    dataset_id: str
+    available: bool
+    quality_vars: list[str]
+    campaigns: list[YHealthCampaign]
+    note: str = ""
+
+
 class SoftSensorResponse(BaseModel):
     """L3 軟測量：逐樣本預測量測 Ŷ + 可信帶 + 實際 Y（量測值偏移視圖）。"""
 

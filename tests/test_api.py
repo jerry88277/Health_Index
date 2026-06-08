@@ -51,6 +51,23 @@ def test_tep_through_api_marquee():
 
 
 @pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
+def test_tep_yhealth_flags_product_change_not_injected_drift():
+    # Y-MSPC（Y 分布健康）：換產品 B/C(G/H 比例變)被旗標、注入 drift(Y 分布不變)不旗標——與軟測量互補
+    d = client.post("/yhealth", json={"dataset_id": "tep", "seed": 0, "drift_strength": 1.0}).json()
+    assert d["available"] is True and d["quality_vars"] == ["yq_G", "yq_H"]
+    camps = {c["campaign_id"]: c for c in d["campaigns"]}
+    assert camps[1]["y_flagged"] is True and camps[3]["y_flagged"] is True   # B, C 產品分布變
+    assert camps[0]["y_flagged"] is False                                     # golden Y 健康
+    assert camps[4]["y_flagged"] is False                                     # drift：Y 分布不變(只 X→Y 斷)
+
+
+def test_yhealth_synthetic_unavailable():
+    # 純量品質資料集 → Y 分布健康不適用（available=False，不誤導）
+    d = client.post("/yhealth", json={"dataset_id": "synthetic", "seed": 5}).json()
+    assert d["available"] is False and d["campaigns"] == []
+
+
+@pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
 def test_tep_softsensor_mapping_drift():
     # Y 健康（軟測量）：drift 段 X→Y 映射被破壞 → Ŷ 偏離實際 Y（量測層抓到）
     import numpy as np

@@ -37,8 +37,11 @@ from .schemas import (
     SeriesResponse,
     SoftSensorResponse,
     TimelineResponse,
+    YHealthCampaign,
+    YHealthResponse,
 )
 from ..adapters import tep
+from ..detectors.mspc import MSPCModel
 from ..detectors.soft_sensor import SoftSensor
 from ..interface import Y_VALUE
 
@@ -200,6 +203,38 @@ def timeline(req: AnalyzeRequest) -> TimelineResponse:
         spe_limit=round(float(m.spe_lim_), 4),
         campaigns=spans,
     )
+
+
+@app.post("/yhealth", response_model=YHealthResponse)
+def yhealth(req: AnalyzeRequest) -> YHealthResponse:
+    """Y 分布健康（Y-MSPC：T²/SPE on 多維品質 Y）：每段品質分布是否偏離 golden。
+
+    與 /softsensor（X→Y 映射健康）互補——Y-MSPC 抓「品質分布本身變了」（如換產品 G/H 比例不同），
+    軟測量抓「X→Y 關係斷了」（注入 drift：Y 分布不變但映射偏）。純量品質資料集（synthetic）
+    available=False（Y 分布健康需多維品質）。
+    """
+    _ds, gt, fr, ds_seg, cols, hi = _prepare(req)
+    qcols = [c for c in fr.columns if c.startswith("yq_")]
+    if not qcols:
+        return YHealthResponse(
+            dataset_id=req.dataset_id, available=False, quality_vars=[], campaigns=[],
+            note="此資料集為純量品質；Y 分布健康(Y-MSPC)需多維品質(如 G/H)。",
+        )
+    reentry = set(detect_reentry_campaigns(ds_seg))
+    Yall = fr[qcols].to_numpy()
+    obs = np.isfinite(Yall).all(axis=1)
+    m = MSPCModel().fit(Yall[np.asarray(gt.golden_mask) & obs])  # golden 觀測 Y 上 fit
+    camp_ids = fr[CAMPAIGN_ID].to_numpy()
+    grades = fr[GRADE_LABEL].to_numpy()
+    out: list[YHealthCampaign] = []
+    for cid in sorted(int(c) for c in np.unique(camp_ids)):
+        Yc = Yall[(camp_ids == cid) & obs]
+        rate = float(m.is_anomaly(Yc).mean()) if len(Yc) else 0.0
+        out.append(YHealthCampaign(
+            campaign_id=cid, grade=str(grades[camp_ids == cid][0]), is_reentry=cid in reentry,
+            y_health=round(1.0 - rate, 4), y_flagged=rate > 0.5,
+        ))
+    return YHealthResponse(dataset_id=req.dataset_id, available=True, quality_vars=qcols, campaigns=out)
 
 
 @app.post("/series", response_model=SeriesResponse)

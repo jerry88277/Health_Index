@@ -132,6 +132,7 @@ def generate(
 
     blocks_x: list[np.ndarray] = []
     blocks_y: list[np.ndarray] = []
+    blocks_gh: list[np.ndarray] = []  # 2 維品質 (G, H)，供 Y-MSPC（Y 分布健康）
     grades: list[str] = []
     bounds: list[tuple[int, int, str]] = []
     golden_flags: list[np.ndarray] = []
@@ -143,11 +144,13 @@ def generate(
         npc = n_per_campaign * 2 if tag == "golden" else n_per_campaign  # golden 大窗→穩定基準
         seg = pool[rng.choice(len(pool), size=npc, replace=True)]        # iid 重抽（同分佈）
         X = seg[:, XMEAS_COLS]
-        y = 0.5 * (seg[:, G_COL] + seg[:, H_COL])  # 品質代理：G/H 平均（單一 Y 示範；可擴 2 維）
+        gh = seg[:, [G_COL, H_COL]]                 # (n,2) 產品 G、H
+        y = gh.mean(axis=1)                          # 純量品質代理（既有軟測量用 Y_VALUE）
         if tag == "drift":  # 打亂 X 部分欄→破壞相關(X 健康)且斷 X→Y 配對(Y 健康)；保各欄邊際(單變數盲)
             X = _inject_relationship_drift(X, golden_x, strength=drift_strength, seed=seed)
         blocks_x.append(X)
         blocks_y.append(y)
+        blocks_gh.append(gh)
         grades.extend([grade] * len(X))
         bounds.append((cursor, cursor + len(X), grade))
         golden_flags.append(np.full(len(X), tag == "golden"))
@@ -156,11 +159,16 @@ def generate(
 
     X_all = np.vstack(blocks_x)
     y_full = np.concatenate(blocks_y)
+    gh_full = np.vstack(blocks_gh)
     n = X_all.shape[0]
 
-    y_value = np.full(n, np.nan)
     sample_idx = np.arange(0, n, y_every)
+    y_value = np.full(n, np.nan)
     y_value[sample_idx] = y_full[sample_idx]
+    yq_g = np.full(n, np.nan)
+    yq_h = np.full(n, np.nan)
+    yq_g[sample_idx] = gh_full[sample_idx, 0]  # 稀疏 2 維品質（同抽樣節拍），供 Y-MSPC
+    yq_h[sample_idx] = gh_full[sample_idx, 1]
 
     ts = pd.date_range("2026-01-01", periods=n, freq="min")
     y_ts = pd.Series(pd.NaT, index=range(n), dtype="datetime64[ns]")
@@ -171,6 +179,8 @@ def generate(
         frame[col] = X_all[:, j]
     frame[Y_VALUE] = y_value
     frame[Y_TIMESTAMP] = y_ts.to_numpy()
+    frame["yq_G"] = yq_g  # 多維品質欄（前綴 yq_）；Y-MSPC 用，非 interface 保留欄
+    frame["yq_H"] = yq_h
 
     gt = TEPGroundTruth(
         campaign_bounds=tuple(bounds),
