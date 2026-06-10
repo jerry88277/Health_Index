@@ -193,6 +193,28 @@ def test_dataframe_allnan_column_and_bad_method_fail_loud():
         dataframe.from_frame(_nan_df(), x_columns=list("abcde"), golden=0.5, impute="bogus")
 
 
+def test_dataframe_inf_and_missing_col_fail_loud_at_boundary():
+    # 紅隊 A3：inf 同 NaN 是延後崩來源，邊界即擋（即使 impute 也拒）
+    raw = _nan_df()
+    raw[list("abcde")] = np.random.RandomState(2).standard_normal((300, 5))
+    raw.iloc[5, 1] = np.inf
+    with pytest.raises(ContractError, match="inf"):
+        dataframe.from_frame(raw, x_columns=list("abcde"), golden=0.5, impute="median")
+    # 紅隊 A4：宣告的 X 欄不存在 → 清楚 ContractError，非 raw KeyError
+    with pytest.raises(ContractError, match="不存在"):
+        dataframe.from_frame(raw, x_columns=["a", "zzz"], golden=0.5)
+
+
+def test_dataframe_error_path_does_not_leak_golden_warning():
+    # 紅隊 A5：X 驗證錯誤（NaN 無 impute）須在 golden 警告之前 raise，不漏「未指定 golden」警告
+    import warnings as _w
+
+    with _w.catch_warnings():
+        _w.simplefilter("error")  # 任何警告→錯誤
+        with pytest.raises(ContractError, match="缺值"):
+            dataframe.from_frame(_nan_df(), x_columns=list("abcde"))  # golden=None + NaN + impute=None
+
+
 def test_tep_tp_rejects_time_preserving_false():
     # 紅隊 A#1：tep_tp 即保時序，明示 time_preserving=False＝語意矛盾 → fail loud（無需資料，先擋）
     with pytest.raises(ValueError, match="tep_tp"):
