@@ -45,6 +45,13 @@ class Config:
     soft_sensor_pls_min_features: int = 30   # X 維 > 此 → 選 PLS（共線/高維，GPR RBF 退化、O(n³) 貴）
     soft_sensor_pls_min_samples: int = 1000  # 觀測 > 此 → 選 PLS（GPR O(n³) 不可擴展）；否則 GPR（小資料非線性友善）
 
+    # --- Y 健康融合（桶2b）：映射健康 ⊕ 分布健康 → 單一 0–1 ---
+    y_map_scale: float = 1.0     # 映射健康 exp 衰減尺度：殘差/可信帶 比超 1 的均值越大→映射越不健康
+    y_map_min_obs: int = 5       # 映射健康最少 Y 觀測數（不足回 None，誠實標不可算非靜默 0）
+    y_fusion_weights: tuple = (1.0, 1.0)  # (映射健康, 分布健康) 融合權重；分布健康僅多維品質有
+    y_flag_threshold: float = 0.5  # 任一 Y 健康分量 < 此 → y_flagged（安全網，類比 X 側 hard-gate；
+                                   # 抓分量塌陷如換產品 dist→0，即使融合均值被另一分量稀釋未過閾）
+
     # --- L4 漂移 ---
     drift_window: int = 60          # 漂移偵測窗大小（與檢定力下限相關，AC-2）
     ks_alpha: float = 0.01          # KS first-pass 顯著水準（廉價 1D 哨兵）
