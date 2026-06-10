@@ -148,6 +148,13 @@
         近零特徵值以 floor 1e-12 相除致 noise 方向膨脹（主訊號 SPE 走殘差投影穩健、端到端不爆，但 T² 未硬化）；
         (2) **近共線感測器**（r≈1 重複欄）會讓 L4 `rank_<p`、行為非逐位元相容（重複欄不帶資訊，改變方向合理但
         宣稱須限定「良定義 full-rank」）；(3) L1 降維後 robust 餘裕較薄（support/維≈1.88，非奇異但中度病態）。
-- [ ] 桶 5（階段 2）：per-dataset 門檻自動校準（命中目標 golden FPR）← **下一步**
-- [ ] 桶 3b（次桶候選）：L2 T² p≫n 硬化（截斷至有效秩或改 SPE-only 高維模式）+ benchmark 納一個真正觸發
-      桶3 路徑的 p≫n 資料集（現有 uci n=445>2p 不觸發；需 n<2p 案例）
+- [~] 桶 5：per-dataset 門檻自動校準 — **investigated → NOT WARRANTED**（2026-06-10，≥2 紅隊對抗複審
+      皆 AGREE-NOT-WARRANTED）。固定 0.6 在 ≥9 種 golden（含真實 penicillin/半導體 + 仿射極端 + 病態分布）
+      golden FPR≈0——HI 自正規化（仿射等變）→ 結構性寬 dead-zone。校準有 recall 收益但 hold-out FPR 代價
+      0.62–0.75 不可接受；真實失效（indpensim 弱故障漏抓）屬**偵測力/可分離性**（桶3b）非門檻、且安全校準
+      只能調低救不了。**改 ship**：`check_threshold_portability` 哨兵（只用 golden floor，逼近門檻則 warn，
+      不改門檻）。詳 `docs/decision_threshold_calibration.md`。
+- [ ] 桶 3b（次桶候選，**升為下一步**）：L2 T² p≫n 硬化（截斷至有效秩或 SPE-only 高維模式）+ 偵測器高維
+      HI 壓縮/偵測力（indpensim faulty 漏抓根因）+ benchmark 納真正觸發桶3 路徑的 p≫n 案例（n<2p）。
+- [ ] 待辦（非桶5）：indpensim 批次 `fwer_alarm` golden alarm≈0.30≫α=0.05，疑軌跡自相關使窗非 iid（與 L2
+      block-aware 債同源）→ FWER 自相關校準延伸至批次。
