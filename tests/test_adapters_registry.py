@@ -20,7 +20,23 @@ _TEP_DATA = os.path.join("data", "tep", "m1d00.mat")
 
 
 def test_registry_lists_builtin_datasets():
-    assert {"synthetic", "tep", "tep_tp", "uci_gas_drift"} <= set(registry.available())
+    assert {"synthetic", "synthetic_pgn", "tep", "tep_tp", "uci_gas_drift"} <= set(registry.available())
+
+
+def test_registry_synthetic_pgn_is_high_dim_pgn():
+    # WHY（桶3b）：synthetic_pgn 須為 p≫n（golden n < 2p）以觸發桶3 高維路徑；附逐列漂移真值供 DoD。
+    ds, gt = registry.build("synthetic_pgn", seed=5, drift_strength=1.2)
+    assert isinstance(ds, ProcessDataset) and isinstance(gt, GroundTruth)
+    golden_n = int(np.asarray(gt.golden_mask).sum())
+    p = len(gt.x_columns)
+    assert golden_n < 2 * p and p >= 100  # p≫n regime
+    assert gt.has_labeled_drift             # 有逐列漂移真值（DoD 可評）
+
+
+def test_registry_synthetic_pgn_guards_low_dim_misuse():
+    # WHY（防呆，比照 tep_tp 紅隊 A#1）：n_per_campaign ≥ 2p 非 p≫n，與 builder 語意矛盾 → fail loud
+    with pytest.raises(ValueError, match="synthetic_pgn"):
+        registry.build("synthetic_pgn", n_per_campaign=300, p=128)
 
 
 def test_registry_build_synthetic_common_groundtruth():

@@ -154,7 +154,17 @@
       0.62–0.75 不可接受；真實失效（indpensim 弱故障漏抓）屬**偵測力/可分離性**（桶3b）非門檻、且安全校準
       只能調低救不了。**改 ship**：`check_threshold_portability` 哨兵（只用 golden floor，逼近門檻則 warn，
       不改門檻）。詳 `docs/decision_threshold_calibration.md`。
-- [ ] 桶 3b（次桶候選，**升為下一步**）：L2 T² p≫n 硬化（截斷至有效秩或 SPE-only 高維模式）+ 偵測器高維
-      HI 壓縮/偵測力（indpensim faulty 漏抓根因）+ benchmark 納真正觸發桶3 路徑的 p≫n 案例（n<2p）。
+- [~] 桶 3b（部分完成，2026-06-10，≥2 紅隊 FIX-FIRST → 修正後 merge）：
+      · ✅ **benchmark 納 p≫n 案例**（`synthetic_pgn` n=80/p=128，registry + DoD specs）——泛化證明涵蓋
+        高維 regime（原僅偵測器單元測試）。誠實邊界（紅隊 A）：DoD 由 L2 SPE+L4 驅動，**桶3 L1 降維對
+        DoD pass/fail 無因果貢獻**（不降維時數字逐位元同），桶3 價值＝數值乾淨非 DoD 驅動。
+      · ✅ **修 benchmark 高維 SPC bug**（紅隊 A 揪出）：原 spc_blind 取絕對『任一變數破 3σ』比例，p 大時
+        被多重比較底噪主導（in-sample 實測 ~0.05–0.09）→ 量噪非訊。改扣 golden in-sample 底噪（低維不變、
+        高維公平）。紅隊 B2 揪出我首版含恆真廢測 → 改為呼叫真實 evaluate_dataset 鎖住扣底噪行為。
+      · ⏭ **未做（仍開放）**：L2 T² p≫n 硬化——**經診斷不需要**（T² 經 k 選擇只用真實成分、SPE 殘差穩健、
+        is_anomaly 正確；僅 GSI reference 爆但不入決策且已文件化 → Rule 3 不修沒壞的）。偵測力/可分離性
+        （indpensim faulty 漏抓）為**真開放問題**（需更強特徵/偵測器，研究級），列獨立待辦。
+- [ ] 桶 3b-cont（研究級待辦）：偵測器高維 HI 壓縮 / 偵測力——indpensim golden(0.976) vs faulty(0.948)
+      HI 重疊，無門檻可分離；屬偵測力非門檻，需更強特徵或 X→Y 軟測量殘差訊號補強。
 - [ ] 待辦（非桶5）：indpensim 批次 `fwer_alarm` golden alarm≈0.30≫α=0.05，疑軌跡自相關使窗非 iid（與 L2
       block-aware 債同源）→ FWER 自相關校準延伸至批次。
