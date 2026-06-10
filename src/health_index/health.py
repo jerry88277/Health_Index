@@ -111,6 +111,44 @@ class HealthIndex:
         """
         return bool(self.health_index(X) < self.config.hi_alarm_threshold or any(self.hard_gates(X).values()))
 
+    def check_threshold_portability(
+        self, X_golden: np.ndarray, *, window: int | None = None, margin: float = 0.1
+    ) -> float:
+        """門檻可移植性哨兵：只用 golden 算窗級 HI floor，逼近告警門檻則 fail-loud（Rule 12）。
+
+        桶5 調查結論（``docs/decision_threshold_calibration.md``，經 ≥2 紅隊複審）：固定
+        ``hi_alarm_threshold=0.6`` 在現行 ≥9 種資料集（含真實 penicillin/半導體）golden FPR≈0，因 HI
+        對 golden 自正規化（仿射等變）→ golden floor 遠高於門檻的寬 dead-zone。**per-dataset 自動校準
+        not warranted**（有 recall 收益但 hold-out FPR 代價 0.62–0.75 不可接受；真實失效屬偵測力非門檻）。
+
+        但 dead-zone 是資料相依的：未來資料集若 golden HI floor **真實**逼近門檻（平穩 golden、非 §3.3
+        的非平穩假象），固定門檻會誤報或對輕微 drift 漏報。本哨兵**只用 golden**（無需 drift 標籤 → 泛化
+        場景可操作）在 floor 逼近門檻時 warn。**不自動改門檻**（校準經驗證 not warranted）。
+
+        Args:
+            X_golden: golden 樣本（須為平穩代表性 golden；非平穩段會低估 floor 製造假警，見決策文件 §3.3）。
+            window: 窗長（None→config.drift_window）。
+            margin: floor 與門檻的安全餘裕；floor < 門檻+margin 即警示。
+
+        Returns:
+            觀測到的 golden 窗 HI floor（最小值）；golden 短於窗長則回 ``nan`` 不檢。
+        """
+        w = int(window or self.config.drift_window)
+        G = np.asarray(X_golden, dtype=float)
+        if len(G) < w:
+            return float("nan")
+        step = max(1, w // 4)
+        floor = min(self.health_index(G[i : i + w]) for i in range(0, len(G) - w + 1, step))
+        thr = self.config.hi_alarm_threshold
+        if floor < thr + margin:
+            warnings.warn(
+                f"golden HI floor={floor:.3f} 逼近告警門檻 {thr}（margin {margin}）→ 固定門檻可能不可移植/"
+                "對輕微 drift 漏報。見 docs/decision_threshold_calibration.md（校準經 ≥2 紅隊驗證 not warranted）。",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return float(floor)
+
     def fwer_pvalues(self, X: np.ndarray) -> dict[str, float]:
         """各層對 golden-A null 的窗級右尾 p-value（越小越異常）。
 
