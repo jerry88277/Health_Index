@@ -35,7 +35,7 @@ class Segment:
     label: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class GroundTruth:
     """統一真值——任一 adapter 經 registry 轉換後回傳此，供評估/benchmark 統一消費。
 
@@ -50,9 +50,14 @@ class GroundTruth:
             漂移時間性而無逐列 ground-truth）。
 
     Raises:
-        ValueError: mask 長度不一致、或 segment 越界（fail loud，Rule 12）。
+        ValueError: golden_mask 非 bool、mask 長度不一致、segment 越界或**重疊**（fail loud，Rule 12）。
 
-    不變式：``len(golden_mask) == len(drift_mask)``（若有）；每個 segment 滿足 0≤start<end≤n。
+    不變式：golden_mask 為 bool；``len(golden_mask) == len(drift_mask)``（若有）；每個 segment 滿足
+        0≤start<end≤n 且彼此**不重疊**（依 start 排序後 start≥前一段 end）。注：**不**強制覆蓋 [0,n)
+        ——transition/排除列可不屬任何 segment（紅隊 A#5：覆蓋非普世不變式，故不檢）。
+
+    註：``eq=False``——numpy 欄使 dataclass 自動 __eq__/__hash__ 在比較/雜湊時拋 ambiguous-truth
+    （紅隊 A#4）；本型別供消費非比較，停用之以免下游 benchmark harness 誤踩。
     """
 
     x_columns: tuple[str, ...]
@@ -61,12 +66,18 @@ class GroundTruth:
     drift_mask: np.ndarray | None = None
 
     def __post_init__(self) -> None:
+        if np.asarray(self.golden_mask).dtype != np.bool_:
+            raise ValueError("golden_mask 須為 bool 陣列")
         n = len(self.golden_mask)
         if self.drift_mask is not None and len(self.drift_mask) != n:
             raise ValueError(f"drift_mask 長度 {len(self.drift_mask)} != golden_mask 長度 {n}")
-        for s in self.segments:
+        prev_end = 0
+        for s in sorted(self.segments, key=lambda x: x.start):
             if not (0 <= s.start < s.end <= n):
                 raise ValueError(f"segment 越界（n={n}）: {s}")
+            if s.start < prev_end:
+                raise ValueError(f"segment 重疊（start {s.start} < 前段 end {prev_end}）: {s}")
+            prev_end = s.end
 
     @property
     def n(self) -> int:

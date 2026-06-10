@@ -10,10 +10,12 @@ bool mask / 區間 / 前段比例啟發式指定（無逐列漂移真值，故 `
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
-from ..interface import GRADE_LABEL, TIMESTAMP, Y_TIMESTAMP, Y_VALUE, ProcessDataset
+from ..interface import GRADE_LABEL, TIMESTAMP, Y_TIMESTAMP, Y_VALUE, ContractError, ProcessDataset
 from .base import GroundTruth, Segment
 
 
@@ -70,7 +72,7 @@ def from_frame(
     grade: str | None = None,
     y_value: str | None = None,
     y_timestamp: str | None = None,
-    golden=0.3,
+    golden=None,
     name: str = "custom",
 ) -> tuple[ProcessDataset, GroundTruth]:
     """從任意 DataFrame 建統一契約 + GroundTruth（不修改原表）。
@@ -82,7 +84,8 @@ def from_frame(
         grade: grade/產品/類別欄名；None → 常數 "A"（單模態）。
         y_value: 軟量測 Y 欄名；None → 全 NaN（無 lab Y，L3 走 GSI 無標籤可信度）。
         y_timestamp: Y 量測時間欄名；None → 有 y_value 觀測處取 timestamp、否則 NaT。
-        golden: golden 基準——bool(n,) | (start,end) | float∈(0,1] 取前比例（預設 0.3，見模組免責）。
+        golden: golden 基準——bool(n,) | (start,end) | float∈(0,1] 取前比例。``None``（預設）→ 取前 30%
+            並發 ``RuntimeWarning``（提醒「前段為健康」是未經確認的啟發式假設，見模組免責，紅隊 B#3）。
         name: 資料集識別。
 
     Returns:
@@ -90,11 +93,25 @@ def from_frame(
         ``segments`` 依 grade 連續同值切段。
 
     Raises:
-        ContractError: ProcessDataset 驗證失敗（缺 X 欄/保留欄衝突）。
-        ValueError: golden 規格非法。
+        ContractError: ProcessDataset 驗證失敗（缺 X 欄/保留欄衝突）、或 **X 欄非數值**（紅隊 B#1，
+            在邊界 fail loud 而非延後到 fit 才拋晦澀錯）。
+        ValueError: df 為空、或 golden 規格非法。
     """
     n = len(df)
+    if n == 0:
+        raise ValueError("from_frame: df 為空（n=0），無法建立資料集")  # 紅隊 B#2 fail loud
     x_columns = tuple(x_columns)
+    nonnum = [c for c in x_columns if c in df.columns and not pd.api.types.is_numeric_dtype(df[c])]
+    if nonnum:
+        raise ContractError(f"X 欄須為數值，非數值欄: {nonnum}")  # 紅隊 B#1：邊界即擋
+    if golden is None:  # 紅隊 B#3：預設啟發式須出聲，不靜默
+        warnings.warn(
+            "from_frame: 未指定 golden，預設取前 30% 為健康基準（假設序列前段平穩健康）。"
+            "若前段含暫態/故障，請以 mask 或 (start,end) 明確指定 golden。",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        golden = 0.3
     out = pd.DataFrame(index=range(n))
 
     ts = (

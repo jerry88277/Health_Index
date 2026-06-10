@@ -12,26 +12,17 @@ from . import synthetic, tep, uci_gas_drift
 from .base import DatasetBuilder, GroundTruth, Segment
 
 
-def _segments_from_bounds(bounds: tuple) -> tuple[Segment, ...]:
-    """正規化既有兩種邊界形狀為 ``Segment``。
+def _campaign_segments(bounds: tuple) -> tuple[Segment, ...]:
+    """synthetic/tep 的 ``(start, end, grade)`` → Segment（id 依順序）。
 
-    - synthetic/tep: ``(start, end, grade)``（第 3 元為 str 標籤）。
-    - uci_gas_drift: ``(batch_id, start, end)``（皆 int）。
-
-    Raises:
-        ValueError: 非預期形狀（fail loud，不靜默誤判）。
+    紅隊 A#3：由呼叫端**明示**形狀，不再以 ``isinstance(b[2], str)`` 嗅探型別（整數 grade 會誤判）。
     """
-    segs: list[Segment] = []
-    for i, b in enumerate(bounds):
-        if len(b) == 3 and isinstance(b[2], str):       # (start, end, grade)
-            start, end, label = b
-            segs.append(Segment(id=i, start=int(start), end=int(end), label=str(label)))
-        elif len(b) == 3:                                # (batch_id, start, end)
-            bid, start, end = b
-            segs.append(Segment(id=int(bid), start=int(start), end=int(end), label=f"batch{int(bid)}"))
-        else:
-            raise ValueError(f"未知 bounds 形狀（無法正規化為 Segment）: {b}")
-    return tuple(segs)
+    return tuple(Segment(id=i, start=int(s), end=int(e), label=str(g)) for i, (s, e, g) in enumerate(bounds))
+
+
+def _batch_segments(bounds: tuple) -> tuple[Segment, ...]:
+    """uci_gas_drift 的 ``(batch_id, start, end)`` → Segment（label=batchN）。"""
+    return tuple(Segment(id=int(bid), start=int(s), end=int(e), label=f"batch{int(bid)}") for bid, s, e in bounds)
 
 
 def _wrap_campaign_like(ds: ProcessDataset, gt) -> tuple[ProcessDataset, GroundTruth]:
@@ -39,7 +30,7 @@ def _wrap_campaign_like(ds: ProcessDataset, gt) -> tuple[ProcessDataset, GroundT
     return ds, GroundTruth(
         x_columns=gt.x_columns,
         golden_mask=gt.golden_mask,
-        segments=_segments_from_bounds(gt.campaign_bounds),
+        segments=_campaign_segments(gt.campaign_bounds),
         drift_mask=gt.drift_mask,
     )
 
@@ -53,7 +44,10 @@ def _build_tep(**kw) -> tuple[ProcessDataset, GroundTruth]:
 
 
 def _build_tep_tp(**kw) -> tuple[ProcessDataset, GroundTruth]:
-    kw.setdefault("time_preserving", True)  # tep_tp＝保時序模式（②）
+    # tep_tp 即保時序（②）：硬釘 time_preserving=True；明示傳 False＝語意矛盾，fail loud（紅隊 A#1）。
+    if kw.get("time_preserving") is False:
+        raise ValueError("'tep_tp' 即保時序模式，不可 time_preserving=False；要 iid 重抽請改用 'tep'")
+    kw["time_preserving"] = True
     return _wrap_campaign_like(*tep.generate(**kw))
 
 
@@ -62,7 +56,7 @@ def _build_uci_gas_drift(**kw) -> tuple[ProcessDataset, GroundTruth]:
     return ds, GroundTruth(
         x_columns=gt.x_columns,
         golden_mask=gt.golden_mask,
-        segments=_segments_from_bounds(gt.batch_bounds),
+        segments=_batch_segments(gt.batch_bounds),
         drift_mask=None,  # 真實感測器老化集：漂移為時間性、無逐列 ground-truth（誠實標 None）
     )
 

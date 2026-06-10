@@ -107,7 +107,7 @@ def test_dataframe_bad_golden_and_reserved_column_fail_loud():
         dataframe.from_frame(raw, x_columns=["a", "b"], golden=1.5)        # 比例越界
     bad = pd.DataFrame(np.zeros((20, 1)), columns=["timestamp"])           # 保留欄當 X
     with pytest.raises(ContractError):
-        dataframe.from_frame(bad, x_columns=["timestamp"])
+        dataframe.from_frame(bad, x_columns=["timestamp"], golden=0.5)
 
 
 def test_dataframe_output_drives_chain():
@@ -128,6 +128,43 @@ def test_groundtruth_validation_fails_loud():
     with pytest.raises(ValueError, match="越界"):
         GroundTruth(x_columns=("a",), golden_mask=np.zeros(10, bool),
                     segments=(Segment(0, 0, 20, "A"),))
+
+
+# --- 紅隊複審後的 fail-loud 強化 ---
+def test_dataframe_nonnumeric_x_fails_at_boundary():
+    # 紅隊 B#1：非數值 X 在 from_frame 邊界即 ContractError，不延後到 fit 才拋晦澀錯
+    raw = pd.DataFrame({"a": [1.0, 2, 3], "b": ["lo", "hi", "lo"]})
+    with pytest.raises(ContractError, match="非數值"):
+        dataframe.from_frame(raw, x_columns=["a", "b"], golden=0.5)
+
+
+def test_dataframe_empty_df_fails_loud():
+    # 紅隊 B#2：空表 → ValueError，不靜默回退化資料集
+    with pytest.raises(ValueError, match="空"):
+        dataframe.from_frame(pd.DataFrame({"a": []}), x_columns=["a"], golden=0.5)
+
+
+def test_dataframe_default_golden_warns():
+    # 紅隊 B#3：未指定 golden → RuntimeWarning（「前段健康」是未確認啟發式，須出聲）
+    raw = pd.DataFrame(np.zeros((50, 2)), columns=["a", "b"])
+    with pytest.warns(RuntimeWarning, match="golden"):
+        _, gt = dataframe.from_frame(raw, x_columns=["a", "b"])
+    assert gt.golden_mask.sum() == 15  # 前 30%
+
+
+def test_tep_tp_rejects_time_preserving_false():
+    # 紅隊 A#1：tep_tp 即保時序，明示 time_preserving=False＝語意矛盾 → fail loud（無需資料，先擋）
+    with pytest.raises(ValueError, match="tep_tp"):
+        registry.build("tep_tp", time_preserving=False)
+
+
+def test_groundtruth_rejects_nonbool_and_overlap():
+    # 紅隊 A#4/A#5：bool dtype + segment 不重疊不變式被執行期強制
+    with pytest.raises(ValueError, match="bool"):
+        GroundTruth(x_columns=("a",), golden_mask=np.zeros(10, dtype=int), segments=())
+    with pytest.raises(ValueError, match="重疊"):
+        GroundTruth(x_columns=("a",), golden_mask=np.zeros(100, bool),
+                    segments=(Segment(0, 0, 60, "A"), Segment(1, 40, 100, "B")))
 
 
 @pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
