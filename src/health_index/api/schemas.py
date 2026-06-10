@@ -120,7 +120,7 @@ class SoftSensorResponse(BaseModel):
     band_half: list[float]          # 逐樣本可信帶半寬（CP 半寬，或退回 2×GPR 後驗 std）
     y_actual: list                  # 實際 Y（有觀測處為 float，否則 None）
     cp_available: bool              # 是否以 Conformal Prediction 可信帶（標籤足量）
-    band_kind: str                  # "CP" 或 "GPR_std"（誠實標可信帶來源）
+    band_kind: str                  # "CP" / "GPR_std" / "PLS_std"（誠實標可信帶來源；PLS_std 見桶2a 高維路徑）
     y_delay_steps: int = 0          # 估計 X→Y 延遲步數（0=資料列對齊/無可復原延遲，映射以 X(t−d) 訓練）
     campaigns: list[CampaignSpan]
 

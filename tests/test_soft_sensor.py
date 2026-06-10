@@ -98,3 +98,96 @@ def test_deterministic_fit():
     p1 = SoftSensor().fit(X, y).predict(X[:10])
     p2 = SoftSensor().fit(X, y).predict(X[:10])
     assert np.allclose(p1, p2)
+
+
+# --- 桶2a：PLS 軟測量（可擴展/共線穩健）+ 規模選擇器 ---
+from health_index.detectors.soft_sensor import (  # noqa: E402
+    PLSSoftSensor,
+    _split_conformal_q,
+    make_soft_sensor,
+)
+
+
+def _collinear_xy(n=600, p=128, r=3, seed=0):
+    """高維**共線** X（p 維由 r≪p 個潛因子生成）+ Y=潛因子線性組合——軟測量的典型場景，
+    GPR(RBF) 在此高維退化、O(n³) 貴；PLS 投影潛在成分天然處理。"""
+    rng = np.random.default_rng(seed)
+    Z = rng.standard_normal((n, r))
+    load = rng.standard_normal((r, p))
+    beta = rng.standard_normal(r)
+    X = Z @ load + 0.1 * rng.standard_normal((n, p))
+    y = Z @ beta + 0.05 * rng.standard_normal(n)
+    return X, y
+
+
+def test_pls_recovers_high_dim_collinear_y():
+    # marquee WHY（桶2a 存在理由）：128 維共線 X，PLS held-out R² 高、成分數受 cap——這正是「多製程
+    # 參數」泛化時 GPR/RBF 退化、O(n³) 不可擴展之處。若 PLS 喪失此能力（R² 崩），測試失敗。
+    X, y = _collinear_xy()
+    ss = PLSSoftSensor().fit(X[:400], y[:400])
+    yhat = ss.predict(X[400:])
+    yt = y[400:]
+    r2 = 1 - np.sum((yt - yhat) ** 2) / np.sum((yt - yt.mean()) ** 2)
+    assert r2 > 0.9
+    assert ss.n_components_ == min(PLSSoftSensor().config.pls_components, X.shape[1], 399)
+
+
+def test_pls_cp_coverage_at_target():
+    # WHY：split-CP 為 model-agnostic——以 PLS 為基底仍給有限樣本覆蓋保證（≈1−α）
+    X, y = _collinear_xy(n=900)
+    from dataclasses import replace
+
+    cfg = replace(PLSSoftSensor().config, cp_min_calibration=100)
+    n = len(X)
+    tr, ca = n // 3, 2 * n // 3
+    ss = PLSSoftSensor(cfg).fit(X[:tr], y[:tr]).calibrate_cp(X[tr:ca], y[tr:ca])
+    assert ss.cp_available
+    lo, hi = ss.predict_interval(X[ca:])
+    cov = ((y[ca:] >= lo) & (y[ca:] <= hi)).mean()
+    assert cov >= (1.0 - cfg.cp_alpha) - 0.05 and cov <= 0.999  # 覆蓋保證、非無限寬
+
+
+def test_pls_interface_matches_gpr_and_unavailable_raises():
+    # WHY（互換性）：PLS 與 SoftSensor 同介面；CP 不足時 predict_interval fail loud
+    X, y = _collinear_xy(n=120)
+    ss = PLSSoftSensor().fit(X, y)
+    assert hasattr(ss, "predict") and hasattr(ss, "calibrate_cp") and hasattr(ss, "cp_available")
+    yh, std = ss.predict(X[:5], return_std=True)
+    assert yh.shape == (5,) and std.shape == (5,) and np.all(std == std[0])  # 同方差 std
+    ss.calibrate_cp(X, y)  # calib < cp_min_calibration(200) → 不可用
+    assert not ss.cp_available
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        ss.predict_interval(X[:5])
+
+
+def test_make_soft_sensor_selects_by_scale():
+    # WHY（選擇器）：低維小資料 → GPR（向後相容）；高維 或 大 n → PLS（可擴展）
+    assert isinstance(make_soft_sensor(n_samples=100, n_features=10), SoftSensor)
+    assert isinstance(make_soft_sensor(n_samples=445, n_features=128), PLSSoftSensor)
+    assert isinstance(make_soft_sensor(n_samples=2000, n_features=10), PLSSoftSensor)
+
+
+def test_split_conformal_q_helper_edges():
+    # WHY：CP 分位 helper 的兩個 None 情形（calib 不足 / α 太小 k>n）+ 正常回第 k 小
+    s = np.arange(1.0, 101.0)  # 100 個殘差
+    assert _split_conformal_q(s, n_min=200, alpha=0.1) is None          # n<n_min
+    assert _split_conformal_q(s, n_min=50, alpha=0.001) is None         # k=ceil(101*0.999)=101>100
+    q = _split_conformal_q(s, n_min=50, alpha=0.1)
+    assert q == np.sort(s)[int(np.ceil(101 * 0.9)) - 1]                 # 第 k 小（k=91）
+
+
+def test_pls_deterministic():
+    X, y = _collinear_xy(n=200)
+    p1 = PLSSoftSensor().fit(X, y).predict(X[:10])
+    p2 = PLSSoftSensor().fit(X, y).predict(X[:10])
+    assert np.allclose(p1, p2)
+
+
+def test_pls_constant_x_fails_loud():
+    # 紅隊 A-D2：全常數 X → PLS deflation 內部 NaN crash，改在 fit 邊界 fail loud（清楚訊息）
+    import pytest
+
+    with pytest.raises(ValueError, match="常數"):
+        PLSSoftSensor().fit(np.ones((50, 5)), np.arange(50.0))
