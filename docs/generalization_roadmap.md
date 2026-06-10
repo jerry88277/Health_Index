@@ -133,6 +133,7 @@
 
 ## 7. 進度
 - [x] §1–§6 規劃（本檔）— 2026-06-10
-- [/] 桶 1：DatasetAdapter 協定 + 統一 GroundTruth + registry + 通用 dataframe adapter
-- [ ] 桶 2/3/4（階段 1，可平行）
+- [x] 桶 1：DatasetAdapter 協定 + 統一 GroundTruth + registry + 通用 dataframe adapter
+      — 2026-06-10（merge，紅隊 ≥2 視角複審後修正 tep_tp 防呆/顯式 segment/數值 X 守門/eq=False）
+- [ ] 桶 2/3/4（階段 1，可平行）← **下一步：桶 2（X&Y 軟量測核心，最貼合使用者需求）**
 - [ ] 桶 5/6（階段 2）
