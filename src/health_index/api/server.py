@@ -44,7 +44,7 @@ from .schemas import (
 )
 from ..adapters import tep
 from ..detectors.mspc import MSPCModel
-from ..detectors.soft_sensor import SoftSensor
+from ..detectors.soft_sensor import make_soft_sensor
 from ..interface import Y_VALUE
 from ..preprocess.align import delay_align_train, estimate_delay
 
@@ -201,17 +201,20 @@ def softsensor(req: AnalyzeRequest) -> SoftSensorResponse:
     # 不變式：estimate_delay 僅在 common obs ≥ 2p+1（且 obs−max_lag≥0）時回 d>0，而 d≤max_lag，
     # 故 delay_align_train 對齊後留存 obs ≥ common ≥ 2p+1 ≥ 2，fit 不會因觀測不足拋例外。
     Xg_al, yg_al = delay_align_train(Xg, yg, d)              # (X(t−d), Y(t)) 對齊訓練對
-    ss = SoftSensor(hi.config).fit(Xg_al, yg_al)
+    # 依資料規模自動選軟測量基底（桶2）：高維/大 n → PLS（可擴展、共線穩健）；否則 GPR（小資料友善）。
+    # synthetic(p=10)/tep(p=22) 小資料 → GPR，行為不變（向後相容）。
+    ss = make_soft_sensor(hi.config, n_samples=len(yg_al), n_features=len(cols)).fit(Xg_al, yg_al)
     ss.calibrate_cp(Xg_al, yg_al)
 
     X = fr[cols].to_numpy()
     yhat, std = ss.predict(X, return_std=True)
+    method = getattr(ss, "method", "gpr")  # SoftSensor 無 method 屬性 → "gpr"
     if ss.cp_available:
         band_half = np.full(len(X), float(ss.cp_q_))
         kind = "CP"
     else:
         band_half = 2.0 * std
-        kind = "GPR_std"
+        kind = "GPR_std" if method == "gpr" else "PLS_std"
     y_actual = fr[Y_VALUE].to_numpy()
     spans = [CampaignSpan(campaign_id=c, start=s, end=e, grade=g) for c, s, e, g in _campaign_spans(fr, cols)]
     return SoftSensorResponse(

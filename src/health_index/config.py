@@ -41,6 +41,9 @@ class Config:
     # --- L3 軟測量/可信度 ---
     cp_alpha: float = 0.10        # Conformal 風險預算（目標覆蓋率 1−α）
     cp_min_calibration: int = 200  # split-CP 上線最小 calibration 樣本；不足走 GSI/ICAD（紅隊 H1）
+    pls_components: int = 5       # PLS 軟測量潛在成分數（上限，實際 cap 至 min(p, n_obs−1)）；軟測量潛因子
+    soft_sensor_pls_min_features: int = 30   # X 維 > 此 → 選 PLS（共線/高維，GPR RBF 退化、O(n³) 貴）
+    soft_sensor_pls_min_samples: int = 1000  # 觀測 > 此 → 選 PLS（GPR O(n³) 不可擴展）；否則 GPR（小資料非線性友善）
 
     # --- L4 漂移 ---
     drift_window: int = 60          # 漂移偵測窗大小（與檢定力下限相關，AC-2）
