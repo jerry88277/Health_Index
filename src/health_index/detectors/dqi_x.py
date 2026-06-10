@@ -28,6 +28,7 @@ from scipy.stats import trim_mean
 from sklearn.covariance import MinCovDet
 
 from ..config import DEFAULT, Config
+from .highdim import effective_rank, reduction_plan
 
 
 def sanity_check(
@@ -82,7 +83,14 @@ class DQIxGate:
     robust: bool = True
 
     def fit(self, X_golden: np.ndarray) -> "DQIxGate":
-        """以 golden-A 建立標準化、（robust）中心/協方差、PCA 載荷與 DQI_x 門檻（凍結）。"""
+        """以 golden-A 建立標準化、（robust）中心/協方差、PCA 載荷與 DQI_x 門檻（凍結）。
+
+        高維穩健（桶3）：當 ``n < hd_min_n_over_p × p`` 時，MCD 在原 p 維**靜默奇異**（不 raise、
+        回 cond 爆的協方差，毒化下游距離，Rule 12）。改先以普通 SVD 把標準化 X 預降維到前 ``r``
+        個 PCA-score（``r`` 綁 n 使降維後 n>2r），於 score 空間才估 robust 協方差。降維與否、r、
+        有效秩、變異是否匱乏皆存於 ``reduced_/r_/rank_/degraded_`` 旗標誠實 surface（非靜默截斷）。
+        低維（n≫2p）→ 不降維、行為與 r=p 逐位元等價（向後相容）。
+        """
         X = np.asarray(X_golden, dtype=float)
         if self.robust:
             # robust 標準化（median/MAD）：否則污染會膨脹 sample std、壓縮離群距離，
@@ -93,38 +101,79 @@ class DQIxGate:
             self.mean_ = X.mean(axis=0)
             self.std_ = X.std(axis=0) + 1e-9
         Xs = (X - self.mean_) / self.std_
+        Z = self._fit_reduction(Xs)  # 設 reduced_/r_/rank_/degraded_/reduce_V_；回 score 空間（Xs 或 Xs@V_r）
         if self.robust:
             mcd = MinCovDet(
                 support_fraction=self.config.mcd_support_fraction,
                 random_state=self.config.random_state,
-            ).fit(Xs)
+            ).fit(Z)
             self.center_ = mcd.location_
             cov = mcd.covariance_
             support = mcd.support_  # robust inlier 遮罩 → 門檻排除污染
         else:
-            self.center_ = Xs.mean(axis=0)
-            cov = np.cov(Xs, rowvar=False)
-            support = np.ones(len(Xs), dtype=bool)
+            self.center_ = Z.mean(axis=0)
+            cov = np.cov(Z, rowvar=False)
+            support = np.ones(len(Z), dtype=bool)
         eigvals, eigvecs = np.linalg.eigh(cov)
         order = np.argsort(eigvals)[::-1]
         eigvals = np.clip(eigvals[order], 0.0, None)
         eigvecs = eigvecs[:, order]
         cum = np.cumsum(eigvals) / eigvals.sum()
         k = int(np.searchsorted(cum, self.config.pca_var_explained) + 1)
-        self.k_ = max(1, min(k, Xs.shape[1]))
+        self.k_ = max(1, min(k, Z.shape[1]))
         self.P_k_ = eigvecs[:, : self.k_]
-        dq = self._dqi(Xs)
+        dq = self._dqi(Z)
         self.threshold_ = self.config.dqi_x_threshold_factor * float(trim_mean(dq[support], 0.05))
         return self
 
-    def _dqi(self, Xs: np.ndarray) -> np.ndarray:
-        a = (Xs - self.center_) @ self.P_k_  # k 維 PCA 特徵（相對 robust 中心）
+    def _fit_reduction(self, Xs: np.ndarray) -> np.ndarray:
+        """決定並套用 MCD 前的 PCA-score 預降維；回傳 score 空間（Xs 原樣或 Xs@V_r）。
+
+        確定性（Rule 5）：對標準化 golden 做 SVD（恆良定義，不需協方差可逆）取右奇異向量；
+        以 ``highdim.reduction_plan`` 決定是否降維與維度 r。設旗標：
+            reduced_  是否啟動降維（True＝原 p 維樣本不足、改 score 空間）。
+            r_        降維後維度（未降維時＝有效秩 cap 至 p）。
+            rank_     標準化 golden 的有效數值秩。
+            degraded_ 即使降維仍放不下 ``pca_var_explained`` 目標變異所需成分（樣本匱乏）→ 須 surface。
+            reduce_V_ (p×r) 投影矩陣；None＝不降維。
+        """
+        n, p = Xs.shape
+        # SVD：奇異值² ∝ 協方差特徵值（不需估可逆協方差，p≫n 仍良定義）
+        _, sv, vt = np.linalg.svd(Xs, full_matrices=False)
+        ev = sv**2
+        self.rank_ = effective_rank(ev, rtol=self.config.hd_rank_rtol)
+        cum = np.cumsum(ev) / (ev.sum() + 1e-300)
+        var_components = int(np.searchsorted(cum, self.config.pca_var_explained) + 1)
+        need_reduce, r, degraded = reduction_plan(
+            n, p,
+            rank=self.rank_,
+            var_components=var_components,
+            min_n_over_p=self.config.hd_min_n_over_p,
+            max_frac=self.config.hd_reduce_max_frac,
+        )
+        self.reduced_ = bool(need_reduce)
+        self.r_ = int(r)
+        self.degraded_ = bool(degraded)
+        if not need_reduce:
+            self.reduce_V_ = None
+            return Xs
+        self.reduce_V_ = vt[:r].T  # (p, r) 前 r 個右奇異向量＝主成分載荷
+        return Xs @ self.reduce_V_
+
+    def _project(self, Xs: np.ndarray) -> np.ndarray:
+        """套用 fit 時決定的 PCA-score 降維（未降維則原樣回傳）。"""
+        if getattr(self, "reduce_V_", None) is None:
+            return Xs
+        return Xs @ self.reduce_V_
+
+    def _dqi(self, Z: np.ndarray) -> np.ndarray:
+        a = (Z - self.center_) @ self.P_k_  # k 維 PCA 特徵（相對 robust 中心；Z＝降維後 score 空間或原 Xs）
         return np.sqrt((a**2).sum(axis=1))
 
     def score(self, X: np.ndarray) -> np.ndarray:
         """回傳每列 DQI_x（越大越離 golden 域）。需先 fit。"""
         Xs = (np.asarray(X, dtype=float) - self.mean_) / self.std_
-        return self._dqi(Xs)
+        return self._dqi(self._project(Xs))
 
     def is_inlier(self, X: np.ndarray) -> np.ndarray:
         """DQI_x ≤ 門檻 為域內（True）。"""

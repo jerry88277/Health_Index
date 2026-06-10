@@ -20,6 +20,7 @@ from scipy.spatial.distance import cdist
 from scipy.stats import ks_2samp, wasserstein_distance
 
 from ..config import DEFAULT, Config
+from .highdim import effective_rank
 
 
 @dataclass
@@ -29,15 +30,23 @@ class DriftDetector:
     config: Config = field(default=DEFAULT)
 
     def fit(self, X_golden: np.ndarray) -> "DriftDetector":
-        """建立標準化、PCA、golden 分數、MMD bandwidth 與 Wasserstein 量級的 golden null。"""
+        """建立標準化、PCA、golden 分數、MMD bandwidth 與 Wasserstein 量級的 golden null。
+
+        高維穩健（桶3）：p≫n 時協方差有 p−(n−1) 個近零特徵值，其特徵向量為任意 noise 方向；
+        若保留全 p 個成分，per-component KS 會在這些 noise 方向上檢定（無意義）且把 Bonferroni
+        校正 ×p 過度膨脹、稀釋真實訊號。改截斷至**有效數值秩**（``rank_``）——只在真實變異子空間
+        檢定。p≪n 且良定義時 rank_=p → 全保留、行為逐位元不變（向後相容）。
+        """
         X = np.asarray(X_golden, dtype=float)
         self.mean_ = X.mean(axis=0)
         self.std_ = X.std(axis=0) + 1e-9
         Xs = (X - self.mean_) / self.std_
         cov = np.cov(Xs, rowvar=False)
         eigvals, eigvecs = np.linalg.eigh(cov)
-        self.P_ = eigvecs[:, np.argsort(eigvals)[::-1]]
-        self.Sg_ = Xs @ self.P_  # golden 分數
+        order = np.argsort(eigvals)[::-1]
+        self.rank_ = effective_rank(eigvals[order], rtol=self.config.hd_rank_rtol)
+        self.P_ = eigvecs[:, order[: self.rank_]]  # 截斷近零 noise 方向（p≪n 良定義時 rank_=p 全保留）
+        self.Sg_ = Xs @ self.P_  # golden 分數（n × rank_）
         # MMD RBF bandwidth：golden 內配對距離中位數（median heuristic）
         d2 = cdist(self.Sg_, self.Sg_, "sqeuclidean")
         med = np.median(d2[d2 > 0])

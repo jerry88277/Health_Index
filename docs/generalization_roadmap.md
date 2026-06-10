@@ -135,5 +135,11 @@
 - [x] §1–§6 規劃（本檔）— 2026-06-10
 - [x] 桶 1：DatasetAdapter 協定 + 統一 GroundTruth + registry + 通用 dataframe adapter
       — 2026-06-10（merge，紅隊 ≥2 視角複審後修正 tep_tp 防呆/顯式 segment/數值 X 守門/eq=False）
-- [ ] 桶 2/3/4（階段 1，可平行）← **下一步：桶 2（X&Y 軟量測核心，最貼合使用者需求）**
-- [ ] 桶 5/6（階段 2）
+- [x] 桶 2a：PLSSoftSensor + split-CP + scale-based selector（大 n/高維軟量測）— 2026-06-10（merge）
+- [x] 桶 2b：YHealthIndex（映射健康 ⊕ 分布健康 → 單一 0–1 + y_flagged 安全網）— 2026-06-10（merge）
+- [x] 桶 4：通用 adapter 缺值處理（fail-loud NaN + opt-in impute；誠實標『填補製造假陰性』）— 2026-06-10（merge）
+- [x] 桶 6：跨資料集 DoD benchmark harness（synthetic/tep/tep_tp 統一通過）— 2026-06-10（merge）
+- [x] 桶 3：L1 PCA-score 預降維（p≫n MinCovDet 靜默奇異 → 降維到 score 空間 + degraded_ 旗標）
+      + L4 有效秩截斷（免 noise 維汙染 KS Bonferroni）— 2026-06-10（紅隊 ≥2 複審）
+      · 誠實邊界：桶3 對 L1 是**數值良定義＋適用性旗標**，非提升 drift 鑑別力（Rule 12）
+- [ ] 桶 5（階段 2）：per-dataset 門檻自動校準（命中目標 golden FPR）← **下一步**
