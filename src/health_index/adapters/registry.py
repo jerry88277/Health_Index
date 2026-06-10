@@ -51,6 +51,26 @@ def _build_tep_tp(**kw) -> tuple[ProcessDataset, GroundTruth]:
     return _wrap_campaign_like(*tep.generate(**kw))
 
 
+def _build_synthetic_pgn(
+    *, n_per_campaign: int = 80, p: int = 128, r: int = 5, seed: int = 5, drift_strength: float = 1.2, **kw
+) -> tuple[ProcessDataset, GroundTruth]:
+    """高維 p≫n synthetic（golden n < 2p）：**刻意觸發桶3 路徑**（L1 PCA-score 預降維 + L4 有效秩截斷）。
+
+    存在理由（紅隊缺口）：桶3 的高維路徑原僅在偵測器單元測試被走到，從未經跨資料集 DoD benchmark
+    端到端驗證（唯一註冊高維集 uci 因 golden n=445>2p=256 不觸發降維）。本 builder 讓 benchmark 涵蓋
+    p≫n regime——同一判斷鏈在高維下仍須通過 golden 健康 / 隱性飄移早於 SPC / 乾淨回歸不誤報三條 DoD。
+
+    防呆（比照 tep_tp，紅隊 A#1）：n_per_campaign ≥ 2p 即非 p≫n，與本 builder 語意矛盾 → fail loud。
+    """
+    if n_per_campaign >= 2 * p:
+        raise ValueError(
+            f"'synthetic_pgn' 須 p≫n（n_per_campaign={n_per_campaign} ≥ 2p={2 * p}）；要低維請改用 'synthetic'"
+        )
+    return _wrap_campaign_like(
+        *synthetic.generate(n_per_campaign=n_per_campaign, p=p, r=r, seed=seed, drift_strength=drift_strength, **kw)
+    )
+
+
 def _build_uci_gas_drift(**kw) -> tuple[ProcessDataset, GroundTruth]:
     ds, gt = uci_gas_drift.load(**kw)
     return ds, GroundTruth(
@@ -63,6 +83,7 @@ def _build_uci_gas_drift(**kw) -> tuple[ProcessDataset, GroundTruth]:
 
 _BUILDERS: dict[str, DatasetBuilder] = {
     "synthetic": _build_synthetic,
+    "synthetic_pgn": _build_synthetic_pgn,  # 桶3b：p≫n，使 benchmark 涵蓋桶3 高維路徑
     "tep": _build_tep,
     "tep_tp": _build_tep_tp,
     "uci_gas_drift": _build_uci_gas_drift,

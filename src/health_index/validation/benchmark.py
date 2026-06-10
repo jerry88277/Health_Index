@@ -6,7 +6,8 @@
 
 1. **golden 健康**：golden 段 Health Index 高（基準不誤報）。
 2. **隱性飄移被抓且早於單變數 SPC**：drift 段被融合 HI 或 AC-6 fwer 抓到，而**單變數 3σ 近乎盲**
-   （越界率低）——這正是本 index 存在的理由。
+   （drift 相對 golden in-sample 的越界**增量**低——高維安全，扣除 p 軸多重比較底噪，桶3b 紅隊 A）
+   ——這正是本 index 存在的理由。
 3. **區分乾淨回歸 vs 殘留飄移**：clean re-entry 健康（不誤報）、drift re-entry 被旗標。
 
 誠實標（Rule 12）：無 drift 真值的資料集（如真實老化集 uci，``drift_mask=None``）只評 golden 健康，
@@ -120,7 +121,17 @@ def evaluate_dataset(
         dh = float(hi.health_index(Xd))
         dfw = bool(hi.fwer_alarm(Xd))
         gmean, gstd = Xg.mean(axis=0), Xg.std(axis=0) + 1e-9
-        spc = float((np.abs(Xd - gmean) > 3 * gstd).any(axis=1).mean())
+
+        def _exceed(X: np.ndarray) -> float:
+            return float((np.abs(X - gmean) > 3 * gstd).any(axis=1).mean())
+
+        # 高維安全（桶3b 紅隊 A 揪出）：原 metric 取 drift 列『任一變數破 3σ』比例，但 p 大時多重比較
+        # 底噪顯著：理論 P(p 軸任一破 3σ)≈1−0.9973^p（p=128≈0.29）；in-sample 因樣本 std 被離群灌大、
+        # 尾巴收縮，實測 golden 自評仍 ~0.05–0.09——足以讓 spc_blind 量到的是底噪非訊。改取 drift
+        # **相對 golden in-sample 底噪的增量**（扣同 p 多重比較期望）→ 低維 golden 底噪≈0 行為不變；高維才
+        # 公平。spc_blind＝drift 比 golden 多出的單變數越界 < 上限（飄移幾乎不留單變數痕）。增量可為負
+        # （drift 比 golden 還安靜）＝更盲，仍視為 blind。
+        spc = _exceed(Xd) - _exceed(Xg)
         # 融合 HI **或** AC-6 任一抓到（OR 雙軌）。誠實標（紅隊 A-D4）：tep_tp 保時序情境下，融合 HI
         # 受權重稀釋幾乎不動（drop≈0.13<margin），drift_caught **僅靠 fwer leg**——融合層對該情境惰性、
         # 由 AC-6/L2 偵測扛起，這是 OR 設計的用意（粗融合漏的由校準偵測器補）。
@@ -144,6 +155,9 @@ def evaluate_dataset(
 
 _DEFAULT_SPECS: tuple[tuple[str, dict], ...] = (
     ("synthetic", {"seed": 5, "drift_strength": 1.2}),
+    # 桶3b：p≫n 涵蓋——整鏈泛化（DoD 由 L2 SPE+L4 驅動，桶3 保高維數值乾淨非 DoD 驅動者，紅隊 A）。
+    # 高維 SPC 盲判準經底噪扣除後 seed=5/r=5 穩健，但仍 seed 敏感（如 seed=10 邊際）→ 預設用穩健 seed。
+    ("synthetic_pgn", {"seed": 5, "drift_strength": 1.2}),
     ("tep", {"seed": 0, "drift_strength": 1.0}),
     ("tep_tp", {"seed": 0, "drift_strength": 0.7}),
 )
