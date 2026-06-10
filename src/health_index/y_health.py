@@ -6,10 +6,15 @@
 - **分布健康（dist）**：多維品質 Y 的 Y-MSPC（T²/SPE）——抓「品質分布本身變了」（換產品 G/H 比例變）。
   純量品質資料集無此分量。
 
-第一性原理（為何兩者皆需）：Y 可從兩個正交方向變壞——關係斷（map）與分布移（dist）。任一掉→Y 不健康。
-單看其一會漏：drift 的 dist 健康、B/C 的 map 可能健康。融合才完整（紅隊實證見 tests）。
+第一性原理（為何兩者皆需）：Y 可從兩個正交方向變壞——關係斷（map）與分布移（dist）。單看其一會漏：
+drift 的 dist 健康、B/C 的 map 可能健康。融合才完整（紅隊實證見 tests）。
 
-誠實標（Rule 12）：分量不可算時回 ``None``（無 Y 觀測 / 無多維品質），融合僅用可用分量，不靜默補 0。
+決策雙軌（類比 X 側 HealthIndex，但**非完全對稱**——無 FWER/threshold 決策層，誠實標）：
+- ``y_health``：加權**均值**梯度分數（與 X 側 health_index 同採均值；資訊性、非安全網）。
+- ``y_flagged``：**任一可用分量 < y_flag_threshold** 即 True（安全網，類比 X 側 hard-gate）——抓分量
+  塌陷（如換產品 dist→0），即使均值被另一分量稀釋未過閾（紅隊 A1：均值會遮蔽單分量崩）。
+
+誠實標（Rule 12）：分量不可算時回 ``None``（無 Y 觀測 / 無多維品質），融合僅用可用分量、不靜默補 0。
 """
 
 from __future__ import annotations
@@ -54,7 +59,12 @@ class YHealthIndex:
         return self
 
     def _band_half(self, X: np.ndarray) -> np.ndarray:
-        """逐樣本可信帶半寬：CP 可用→常數 cp_q_；否則 2×預測 std（與 /softsensor 同邏輯）。"""
+        """逐樣本可信帶半寬：CP 可用→常數 cp_q_；否則 2×預測 std（與 /softsensor 同邏輯）。
+
+        已知不連續（紅隊 A2，誠實標）：golden 標籤跨越 cp_min_calibration 門檻使 CP 由不可用↔可用切換時，
+        帶寬會跳變（實測 ~+39%）→ map_health 同步跳變。同尺寸但標籤數略差的 golden 可得不同分數；
+        屬 split-CP 上線門檻的離散性，非連續校準（後續可改混合/連續帶）。
+        """
         if self.ss_.cp_available:
             return np.full(len(X), float(self.ss_.cp_q_))
         _, std = self.ss_.predict(X, return_std=True)
@@ -110,3 +120,14 @@ class YHealthIndex:
         if not parts:
             raise ValueError("無可用 Y 健康分量（窗內 Y 觀測不足且無多維品質）；無法計算 Y 健康")
         return float(np.average(parts, weights=weights))
+
+    def y_flagged(self, X: np.ndarray, y: np.ndarray, Yq: np.ndarray | None = None) -> bool:
+        """安全網旗標（類比 X 側 hard-gate）：**任一可用分量 < y_flag_threshold** 即 True。
+
+        抓單分量塌陷（如換產品 dist→0），即使 ``y_health`` 均值被另一健康分量稀釋未過閾（紅隊 A1）。
+        無任何可用分量 → False（不可判，不假陽）。
+        """
+        sm = self.map_health(X, y)
+        sd = self.dist_health(Yq)
+        avail = [s for s in (sm, sd) if s is not None]
+        return any(s < self.config.y_flag_threshold for s in avail)

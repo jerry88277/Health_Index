@@ -28,14 +28,16 @@ def _syn_dense(seed=5):
     return Xg, yg, seg
 
 
-def test_map_health_catches_xy_break_on_dense_y():
-    # marquee WHY：密集 Y 下，注入 drift 破壞 X→Y 關係 → 軟測量殘差升 → map 健康明顯低於 golden。
-    Xg, yg, seg = _syn_dense()
+@pytest.mark.parametrize("seed", [5, 7, 13])
+def test_map_health_catches_xy_break_on_dense_y(seed):
+    # marquee WHY：密集 Y 下，注入 drift 破壞 X→Y 關係 → 軟測量殘差升 → map 健康低於 golden。
+    # 斷言**方向**（跨 seed 穩健 30/30）而非特定 seed 的量級（紅隊 A3：量級 seed-依賴會 cherry-pick）。
+    Xg, yg, seg = _syn_dense(seed)
     yh = YHealthIndex().fit(Xg, yg)               # 純量 Y → 僅 map 分量
     assert yh.y_mspc_ is None
     Xg0, yg0 = seg(0)
     Xd, yd = seg(4)
-    assert yh.y_health(Xd, yd) < yh.y_health(Xg0, yg0) - 0.15   # drift Y 健康明顯低（映射斷）
+    assert yh.y_health(Xd, yd) < yh.y_health(Xg0, yg0)          # drift Y 健康低（映射斷），方向穩健
     assert yh.subscores(Xd, yd)["dist"] is None                 # 純量品質 → 無分布分量
 
 
@@ -96,6 +98,16 @@ def test_dist_health_catches_product_change_not_xy_drift():
     assert yh.dist_health(Yqb) < 0.2                     # B 產品分布大變 → dist 崩
     assert yh.dist_health(Yqg0) > 0.7                     # golden Y 分布健康
     assert yh.dist_health(Yqd) > 0.5                      # drift：Y 分布大致保持（非 Y-訊號，honest）
+
+
+@pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
+def test_y_flagged_safety_net_catches_component_collapse():
+    # 紅隊 A1：融合**均值**會遮蔽單分量崩（B/C dist→0 但 map≈1 → 均值~0.5「中等」）；y_flagged
+    # 安全網（任一分量<門檻）須抓到分量塌陷，類比 X 側 hard-gate。
+    yh, seg = _tep()
+    assert yh.y_flagged(*seg(1)) is True       # B 換產品 → dist 崩 → 旗標
+    assert yh.y_flagged(*seg(3)) is True       # C 同理
+    assert yh.y_flagged(*seg(0)) is False      # golden 健康 → 不旗標
 
 
 @pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")

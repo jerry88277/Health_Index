@@ -49,6 +49,8 @@ class Config:
     y_map_scale: float = 1.0     # 映射健康 exp 衰減尺度：殘差/可信帶 比超 1 的均值越大→映射越不健康
     y_map_min_obs: int = 5       # 映射健康最少 Y 觀測數（不足回 None，誠實標不可算非靜默 0）
     y_fusion_weights: tuple = (1.0, 1.0)  # (映射健康, 分布健康) 融合權重；分布健康僅多維品質有
+    y_flag_threshold: float = 0.5  # 任一 Y 健康分量 < 此 → y_flagged（安全網，類比 X 側 hard-gate；
+                                   # 抓分量塌陷如換產品 dist→0，即使融合均值被另一分量稀釋未過閾）
 
     # --- L4 漂移 ---
     drift_window: int = 60          # 漂移偵測窗大小（與檢定力下限相關，AC-2）

@@ -106,6 +106,7 @@ def test_yhealth_index_tep_dist_catches_product_change():
     c = {x["campaign_id"]: x for x in d["campaigns"]}
     assert c[1]["dist_health"] < 0.2                                      # B 換產品 → 分布健康崩
     assert c[0]["y_health_index"] > c[1]["y_health_index"] + 0.3          # golden 遠高於換產品
+    assert c[1]["y_flagged"] is True and c[0]["y_flagged"] is False       # 安全網旗標 B、放行 golden
 
 
 @pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")

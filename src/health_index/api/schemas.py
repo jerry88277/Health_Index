@@ -150,13 +150,15 @@ class YHealthIndexCampaign(BaseModel):
     campaign_id: int
     grade: str
     is_reentry: bool
-    y_health_index: float | None   # 融合 0–1（None＝無可用分量：窗無足夠 Y 觀測且無多維品質）
+    y_health_index: float | None   # 融合均值 0–1（None＝無可用分量：窗無足夠 Y 觀測且無多維品質）
+    y_flagged: bool                # 安全網：任一分量 < 門檻即 True（抓分量塌陷，類比 X 側 hard-gate）
     map_health: float | None       # X→Y 映射健康（軟測量殘差/帶）；None＝Y 觀測不足
     dist_health: float | None      # Y 分布健康（Y-MSPC）；None＝純量品質無多維 Y
 
 
 class YHealthIndexResponse(BaseModel):
-    """統一 Y 健康指標（桶2b）：對稱於 X 側 HealthIndex；映射健康抓關係斷、分布健康抓分布移。"""
+    """統一 Y 健康指標（桶2b）：映射健康抓關係斷、分布健康抓分布移。**部分對稱** X 側 HealthIndex
+    （分量+融合均值+安全網旗標 y_flagged），但尚無 FWER/threshold 決策層（誠實標，紅隊 B2）。"""
 
     dataset_id: str
     has_quality: bool              # 是否有多維品質欄（dist 分量可算）

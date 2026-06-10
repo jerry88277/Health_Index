@@ -328,9 +328,12 @@ def yhealth_index(req: AnalyzeRequest) -> YHealthIndexResponse:
 
     camp_ids = fr[CAMPAIGN_ID].to_numpy()
     grades = fr[GRADE_LABEL].to_numpy()
+    steady = fr[MODE].to_numpy() == Mode.STEADY.value  # 排除換線 settling 段，與 /analyze 同（紅隊 B1 parity）
     out: list[YHealthIndexCampaign] = []
     for cid in sorted(int(c) for c in np.unique(camp_ids)):
-        m = camp_ids == cid
+        m = (camp_ids == cid) & steady
+        if not m.any():
+            continue
         X = fr.loc[m, cols].to_numpy()
         y = fr.loc[m, Y_VALUE].to_numpy()
         Yq = fr.loc[m, qcols].to_numpy() if qcols else None
@@ -345,6 +348,7 @@ def yhealth_index(req: AnalyzeRequest) -> YHealthIndexResponse:
                 grade=str(grades[m][0]),
                 is_reentry=cid in reentry,
                 y_health_index=yhealth,
+                y_flagged=yhi.y_flagged(X, y, Yq),
                 map_health=None if sub["map"] is None else round(sub["map"], 4),
                 dist_health=None if sub["dist"] is None else round(sub["dist"], 4),
             )
