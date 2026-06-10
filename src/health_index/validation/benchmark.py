@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -69,6 +70,8 @@ def _segment_roles(gt: GroundTruth) -> tuple[Segment, Segment | None, Segment | 
     if gt.drift_mask is not None:
         dm = np.asarray(gt.drift_mask)
         drift = next((s for s in gt.segments if dm[s.start : s.end].any()), None)
+    if drift is not None and drift is golden:  # drift_mask 與 golden 段交集 → 角色衝突，fail loud（紅隊 A-D1）
+        raise ValueError("drift_mask 與 golden 段重疊：角色不互斥，無法評 DoD（檢查真值標記）")
     clean = next(
         (s for s in gt.segments if s is not golden and s is not drift and s.label == golden.label),
         None,
@@ -106,7 +109,7 @@ def evaluate_dataset(
     def seg_x(s: Segment) -> np.ndarray:
         return fr.iloc[s.start : s.end][cols].to_numpy()
 
-    gh = float(hi.health_index(seg_x(golden_seg)))
+    gh = float(hi.health_index(Xg))  # 在 fit 同列上評 golden HI（與 fit set 一致；紅隊 B-D1，消潛在分歧）
     ch = float(hi.health_index(seg_x(clean_seg))) if clean_seg else None
     cfw = bool(hi.fwer_alarm(seg_x(clean_seg))) if clean_seg else None
 
@@ -118,7 +121,10 @@ def evaluate_dataset(
         dfw = bool(hi.fwer_alarm(Xd))
         gmean, gstd = Xg.mean(axis=0), Xg.std(axis=0) + 1e-9
         spc = float((np.abs(Xd - gmean) > 3 * gstd).any(axis=1).mean())
-        drift_caught = bool(dfw or dh < gh - drift_margin)  # 融合 HI 或 AC-6 任一抓到
+        # 融合 HI **或** AC-6 任一抓到（OR 雙軌）。誠實標（紅隊 A-D4）：tep_tp 保時序情境下，融合 HI
+        # 受權重稀釋幾乎不動（drop≈0.13<margin），drift_caught **僅靠 fwer leg**——融合層對該情境惰性、
+        # 由 AC-6/L2 偵測扛起，這是 OR 設計的用意（粗融合漏的由校準偵測器補）。
+        drift_caught = bool(dfw or dh < gh - drift_margin)
         spc_blind = bool(spc < spc_blind_max)
 
     return DatasetDoD(
@@ -157,5 +163,9 @@ def run_benchmark(specs: tuple = _DEFAULT_SPECS) -> list[DatasetDoD]:
         try:
             out.append(evaluate_dataset(name, **kw))
         except FileNotFoundError:
-            continue  # 資料未下載 → 略過（不讓整個 benchmark 失敗）
+            warnings.warn(  # 紅隊 A-D2：略過須出聲，否則「全過」會遮蔽涵蓋率縮水（資料缺非全過）
+                f"benchmark: 略過資料集 '{name}'（資料未下載）；本次涵蓋率不含此集。",
+                RuntimeWarning,
+                stacklevel=2,
+            )
     return out

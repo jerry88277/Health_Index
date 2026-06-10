@@ -88,6 +88,25 @@ def test_run_benchmark_returns_results_skips_missing():
     assert len(out) == 1 and out[0].dataset == "synthetic" and out[0].passed
 
 
+def test_run_benchmark_warns_on_missing_data():
+    # 紅隊 A-D2：資料缺的資料集被略過時須發 RuntimeWarning（涵蓋率縮水不可靜默）
+    with pytest.warns(RuntimeWarning, match="略過"):
+        out = run_benchmark((("uci_gas_drift", {"data_dir": "data/__no_such_dir__"}),))
+    assert out == []
+
+
+def test_segment_roles_rejects_drift_overlapping_golden():
+    # 紅隊 A-D1：drift_mask 與 golden 段重疊 → 角色不互斥 → fail loud
+    n = 20
+    gm = np.zeros(n, bool)
+    gm[:10] = True
+    dm = np.zeros(n, bool)
+    dm[5:8] = True  # 落在 golden 段內
+    gt = GroundTruth(x_columns=("x",), golden_mask=gm, segments=(Segment(0, 0, 10, "A"), Segment(1, 10, 20, "A")), drift_mask=dm)
+    with pytest.raises(ValueError, match="重疊"):
+        _segment_roles(gt)
+
+
 @pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
 def test_benchmark_tep_variants_pass_dod():
     # marquee（真實 TEP）：iid 與保時序情境皆通過 DoD——同一鏈、不同資料結構、相同判準
