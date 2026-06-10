@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -154,6 +155,16 @@ class DQIxGate:
         self.reduced_ = bool(need_reduce)
         self.r_ = int(r)
         self.degraded_ = bool(degraded)
+        if self.degraded_:
+            # 真 surface（非死旗標）：比照 health._fit_fwer_calibration 的 warnings.warn precedent，
+            # 把「即使降維仍放不下目標變異、健康分數可信度下降」發到 stderr/log，使下游/使用者看得到。
+            warnings.warn(
+                f"DQIxGate 高維變異匱乏（degraded）：golden n={n} 僅容降維至 r={r}，"
+                f"但達 pca_var_explained={self.config.pca_var_explained} 需 {var_components} 成分——"
+                f"丟棄真實變異方向，DQI_x 可信度下降。請增 golden 樣本或降維度（Rule 12 誠實 surface）。",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         if not need_reduce:
             self.reduce_V_ = None
             return Xs

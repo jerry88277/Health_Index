@@ -19,6 +19,7 @@ from health_index.config import Config
 from health_index.detectors.dqi_x import DQIxGate
 from health_index.detectors.drift import DriftDetector
 from health_index.detectors.highdim import effective_rank, reduction_plan
+from health_index.health import HealthIndex
 
 
 def _latent_hd(n, p, latent, seed, *, loadings=None, zshift=0.0):
@@ -95,7 +96,9 @@ def test_l1_degraded_flag_surfaces_variance_starvation():
     桶3 必須把 degraded_ 標 True（坦承『即使降維仍放不下全部真實變異』），而非靜默截斷假裝完好。"""
     n, p = 60, 200
     iso, _ = _latent_hd(n, p, latent=200, seed=3)  # 近各向同性（高內在維度）→ 變異分散
-    g_iso = DQIxGate().fit(iso)
+    with warnings.catch_warnings():  # degraded 的 surface（warnings.warn）由整合測試專責驗證；此處只驗旗標
+        warnings.simplefilter("ignore", RuntimeWarning)
+        g_iso = DQIxGate().fit(iso)
     assert g_iso.reduced_ and g_iso.degraded_ is True
     lowrank, _ = _latent_hd(n, p, latent=3, seed=3)  # 低秩 → 少數成分即足
     g_lr = DQIxGate().fit(lowrank)
@@ -147,12 +150,57 @@ def test_l4_low_dim_full_rank_backward_compat():
     assert d.rank_ == 15 and d.Sg_.shape[1] == 15
 
 
-def test_l4_truncation_does_not_dilute_real_signal():
-    """WHY：截斷 noise 維後，真實漂移的 KS 最小 p-value 不會被 ×p 的 Bonferroni 稀釋——
-    截斷版 ks_min_pvalue ≤ 不截斷版（noise 維只增加校正倍數、不帶訊號）。"""
+def test_l4_truncation_reduces_test_count_and_keeps_leading_drift():
+    """WHY：截斷的真實 intent＝(a) 降低 per-component KS 的 Bonferroni 檢定數（不在 noise 維檢定）；
+    (b) 不犧牲對 leading 方向真實漂移的鑑別力。
+
+    誠實邊界（紅隊 A 揪出）：**不**斷言「截斷版 ks_min_pvalue ≤ 不截斷版」——此普遍不等式為假
+    （若某 seed 最強 KS 訊號剛好落在被截掉的近零方向，截斷版反而較大；且 raw p≈1e-20 量級時任何
+    epsilon 鬆弛都會吞掉惡化、使測試失去 Rule 9 鎖定力）。改鎖兩個真實不變式。
+    """
     n, p = 70, 200
     Xg, L = _latent_hd(n, p, latent=5, seed=31)
-    Xd, _ = _latent_hd(n, p, latent=5, seed=33, loadings=L, zshift=1.5)
-    p_trunc = DriftDetector(Config()).fit(Xg).ks_min_pvalue(Xd)
-    p_full = DriftDetector(Config(hd_rank_rtol=0.0)).fit(Xg).ks_min_pvalue(Xd)
-    assert p_trunc <= p_full + 1e-12
+    Xd, _ = _latent_hd(n, p, latent=5, seed=33, loadings=L, zshift=1.5)  # 域位移落在 leading PC
+    d_trunc = DriftDetector(Config()).fit(Xg)
+    d_full = DriftDetector(Config(hd_rank_rtol=0.0)).fit(Xg)
+    # (a) 截斷確實減少受檢成分數（Bonferroni 校正倍數 = Sg_.shape[1]）
+    assert d_trunc.Sg_.shape[1] < d_full.Sg_.shape[1]
+    # (b) leading 方向的真實漂移在截斷後仍顯著（截斷未抹平真訊號）
+    assert d_trunc.ks_min_pvalue(Xd) < 0.01
+    # 對照：golden 自身不應觸發顯著（無漂移）
+    Xg2, _ = _latent_hd(n, p, latent=5, seed=37, loadings=L)
+    assert d_trunc.ks_min_pvalue(Xg2) > 0.01
+
+
+# ----------------------- 整合層（HealthIndex 端到端，紅隊 B 缺口）-----------------------
+
+def test_healthindex_end_to_end_at_p_gg_n():
+    """WHY（紅隊 B Q5 揪出的覆蓋缺口）：桶3 兩路徑原只在偵測器單元被測；補 HealthIndex 端到端 p≫n。
+    斷言整條 L1/L2/L4 融合鏈在 p≫n 不爆、golden 健康（高分、不告警）、明確域位移被告警。
+    當降維/截斷讓整合鏈在高維下失效（golden 誤報或漏抓域位移）時，本測試失敗。"""
+    n, p = 60, 200
+    Xg, L = _latent_hd(n, p, latent=5, seed=41)
+    Xd, _ = _latent_hd(n, p, latent=5, seed=43, loadings=L, zshift=1.6)
+    hi = HealthIndex().fit(Xg)
+    assert hi.dqi_.reduced_ is True          # 高維路徑確實在整合層被走到
+    assert hi.health_index(Xg) >= 0.8        # golden 健康
+    assert hi.is_alarm(Xg) is False          # golden 不告警
+    assert hi.health_index(Xd) < hi.health_index(Xg)  # 域位移降健康
+    assert hi.is_alarm(Xd) is True           # 域位移觸發告警
+
+
+def test_degraded_warning_surfaces_through_healthindex():
+    """WHY（紅隊 A/B Q3 修正：degraded_ 不再是死旗標）：變異匱乏時 HealthIndex.fit 經 DQIxGate
+    發 RuntimeWarning 到 stderr/log（真 surface，比照 _fit_fwer_calibration），非僅設一個沒人讀的 attr。"""
+    n, p = 60, 200
+    iso, _ = _latent_hd(n, p, latent=200, seed=47)  # 高內在維度 → 變異匱乏 → degraded
+    with pytest.warns(RuntimeWarning, match="degraded"):
+        hi = HealthIndex().fit(iso)
+    assert hi.dqi_.degraded_ is True
+    # 低秩高維（reduced 但變異充足）→ 不 degraded、不發 degraded 警告（不過度吵）
+    lowrank, _ = _latent_hd(n, p, latent=3, seed=47)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        hi_lr = HealthIndex().fit(lowrank)
+    assert hi_lr.dqi_.reduced_ is True and hi_lr.dqi_.degraded_ is False
+    assert not any("degraded" in str(x.message) for x in w)

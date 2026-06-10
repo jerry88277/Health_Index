@@ -50,7 +50,8 @@ def reduction_plan(
     決策（確定性）：
         - ``need_reduce = n < min_n_over_p × p``：樣本不足以在原 p 維穩健估協方差（MCD 需 n>2p）。
         - 降維維度 ``r = min(rank, floor(max_frac × n))``（至少 1）：上限綁 n 確保降維後仍 n>2r，
-          使 score 空間的 MCD 有效。
+          使 score 空間的 MCD 有效。誠實註（紅隊）：max_frac=0.4 下 support(0.75n)/r≈1.88 點/維——
+          消除奇異但 robust 餘裕偏薄、可能中度病態（非奇異）；降太狠又丟變異，0.4 為折衷。
         - ``degraded = need_reduce and r < var_components``：連保留 ``pca_var_explained`` 目標變異所
           需的成分數都放不下（被樣本數卡住）→ 真實變異方向被丟棄，**須誠實 surface**（Rule 12），
           非靜默截斷。

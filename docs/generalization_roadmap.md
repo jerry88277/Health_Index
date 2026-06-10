@@ -140,6 +140,14 @@
 - [x] 桶 4：通用 adapter 缺值處理（fail-loud NaN + opt-in impute；誠實標『填補製造假陰性』）— 2026-06-10（merge）
 - [x] 桶 6：跨資料集 DoD benchmark harness（synthetic/tep/tep_tp 統一通過）— 2026-06-10（merge）
 - [x] 桶 3：L1 PCA-score 預降維（p≫n MinCovDet 靜默奇異 → 降維到 score 空間 + degraded_ 旗標）
-      + L4 有效秩截斷（免 noise 維汙染 KS Bonferroni）— 2026-06-10（紅隊 ≥2 複審）
+      + L4 有效秩截斷（免 noise 維汙染 KS Bonferroni）— 2026-06-10（紅隊 ≥2 複審 → FIX-FIRST → 修正後 merge）
       · 誠實邊界：桶3 對 L1 是**數值良定義＋適用性旗標**，非提升 drift 鑑別力（Rule 12）
+      · 紅隊修正：degraded_ 改發 `warnings.warn`（原為死旗標、無消費端＝名實不符的靜默，Rule 12）；
+        修壞測試（L4 截斷不等式普遍為假、epsilon 吞噬惡化，違 Rule 9）；補 HealthIndex 端到端 p≫n 整合測試
+      · **已知限制（NOT 桶3 範圍，紅隊揪出，列次桶候選）**：(1) **L2 T² 在 p≫n 仍脆弱**——`np.cov`+`eigh`
+        近零特徵值以 floor 1e-12 相除致 noise 方向膨脹（主訊號 SPE 走殘差投影穩健、端到端不爆，但 T² 未硬化）；
+        (2) **近共線感測器**（r≈1 重複欄）會讓 L4 `rank_<p`、行為非逐位元相容（重複欄不帶資訊，改變方向合理但
+        宣稱須限定「良定義 full-rank」）；(3) L1 降維後 robust 餘裕較薄（support/維≈1.88，非奇異但中度病態）。
 - [ ] 桶 5（階段 2）：per-dataset 門檻自動校準（命中目標 golden FPR）← **下一步**
+- [ ] 桶 3b（次桶候選）：L2 T² p≫n 硬化（截斷至有效秩或改 SPE-only 高維模式）+ benchmark 納一個真正觸發
+      桶3 路徑的 p≫n 資料集（現有 uci n=445>2p 不觸發；需 n<2p 案例）
