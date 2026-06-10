@@ -152,6 +152,69 @@ def test_dataframe_default_golden_warns():
     assert gt.golden_mask.sum() == 15  # 前 30%
 
 
+# --- 桶4：缺值處理（真實資料感測器斷點）---
+def _nan_df(seed=0):
+    raw = pd.DataFrame(np.random.RandomState(seed).standard_normal((300, 5)), columns=list("abcde"))
+    raw.iloc[10:15, 2] = np.nan  # 感測器 c 斷點
+    return raw
+
+
+def test_dataframe_nan_x_fails_loud_by_default():
+    # marquee WHY（桶4）：X 有缺值且未指定 impute → 邊界即 ContractError，不靜默讓 NaN 流到 fit 才晦澀崩
+    with pytest.raises(ContractError, match="缺值"):
+        dataframe.from_frame(_nan_df(), x_columns=list("abcde"), golden=0.5)
+
+
+@pytest.mark.parametrize("method", ["median", "ffill"])
+def test_dataframe_impute_fills_and_chain_runs(method):
+    # WHY：opt-in impute 填補後契約無 NaN 且全鏈跑通；填補須發扭曲警告（Rule 1 不靜默）
+    with pytest.warns(RuntimeWarning, match="填補"):
+        ds, gt = dataframe.from_frame(_nan_df(), x_columns=list("abcde"), golden=0.5, impute=method)
+    assert ds.frame[list("abcde")].isna().to_numpy().sum() == 0
+    Xg = ds.frame.loc[gt.golden_mask, list(gt.x_columns)].to_numpy()
+    assert HealthIndex().fit(Xg).health_index(Xg) > 0.8   # 填補後判斷鏈可運作
+
+
+def test_dataframe_y_nan_preserved_not_imputed():
+    # WHY（語義）：Y/yq_ 的 NaN 是稀疏量測語義，**不**被 impute 動到（只動 X 缺值）
+    raw = _nan_df()
+    raw[list("abcde")] = np.random.RandomState(1).standard_normal((300, 5))  # X 無 NaN
+    raw["q"] = np.r_[np.full(299, np.nan), [1.0]]
+    ds, _ = dataframe.from_frame(raw, x_columns=list("abcde"), y_value="q", golden=0.5, impute="median")
+    assert int(ds.frame[Y_VALUE].isna().sum()) == 299   # 稀疏 Y 保留
+
+
+def test_dataframe_allnan_column_and_bad_method_fail_loud():
+    raw = _nan_df()
+    raw["c"] = np.nan                                    # 整欄 NaN → 無可填基礎
+    with pytest.raises(ValueError, match="全為 NaN"):
+        dataframe.from_frame(raw, x_columns=list("abcde"), golden=0.5, impute="median")
+    with pytest.raises(ValueError, match="未知 impute"):
+        dataframe.from_frame(_nan_df(), x_columns=list("abcde"), golden=0.5, impute="bogus")
+
+
+def test_dataframe_inf_and_missing_col_fail_loud_at_boundary():
+    # 紅隊 A3：inf 同 NaN 是延後崩來源，邊界即擋（即使 impute 也拒）
+    raw = _nan_df()
+    raw[list("abcde")] = np.random.RandomState(2).standard_normal((300, 5))
+    raw.iloc[5, 1] = np.inf
+    with pytest.raises(ContractError, match="inf"):
+        dataframe.from_frame(raw, x_columns=list("abcde"), golden=0.5, impute="median")
+    # 紅隊 A4：宣告的 X 欄不存在 → 清楚 ContractError，非 raw KeyError
+    with pytest.raises(ContractError, match="不存在"):
+        dataframe.from_frame(raw, x_columns=["a", "zzz"], golden=0.5)
+
+
+def test_dataframe_error_path_does_not_leak_golden_warning():
+    # 紅隊 A5：X 驗證錯誤（NaN 無 impute）須在 golden 警告之前 raise，不漏「未指定 golden」警告
+    import warnings as _w
+
+    with _w.catch_warnings():
+        _w.simplefilter("error")  # 任何警告→錯誤
+        with pytest.raises(ContractError, match="缺值"):
+            dataframe.from_frame(_nan_df(), x_columns=list("abcde"))  # golden=None + NaN + impute=None
+
+
 def test_tep_tp_rejects_time_preserving_false():
     # 紅隊 A#1：tep_tp 即保時序，明示 time_preserving=False＝語意矛盾 → fail loud（無需資料，先擋）
     with pytest.raises(ValueError, match="tep_tp"):
