@@ -64,6 +64,25 @@ def _segments_from_grade(grades: np.ndarray) -> tuple[Segment, ...]:
     return tuple(segs)
 
 
+def _impute_x(x_block: pd.DataFrame, method: str) -> np.ndarray:
+    """填補 X 缺值（不改原）。
+
+    - ``"median"``：逐欄中位數（隱含 MCAR；穩健於離群）。
+    - ``"ffill"``：前向填 + 後向補首段（時序自然，假設缺值期間值維持）。
+
+    Raises:
+        ValueError: 未知策略；或某欄**全為 NaN**（無可填基礎，fail loud）。
+    """
+    if x_block.isna().all(axis=0).any():
+        allnan = x_block.columns[x_block.isna().all(axis=0)].tolist()
+        raise ValueError(f"X 欄全為 NaN，無法填補: {allnan}")
+    if method == "median":
+        return x_block.fillna(x_block.median(numeric_only=True)).to_numpy()
+    if method == "ffill":
+        return x_block.ffill().bfill().to_numpy()
+    raise ValueError(f"未知 impute 策略 '{method}'（須 'median' 或 'ffill'）")
+
+
 def from_frame(
     df: pd.DataFrame,
     *,
@@ -73,6 +92,7 @@ def from_frame(
     y_value: str | None = None,
     y_timestamp: str | None = None,
     golden=None,
+    impute: str | None = None,
     name: str = "custom",
 ) -> tuple[ProcessDataset, GroundTruth]:
     """從任意 DataFrame 建統一契約 + GroundTruth（不修改原表）。
@@ -86,6 +106,10 @@ def from_frame(
         y_timestamp: Y 量測時間欄名；None → 有 y_value 觀測處取 timestamp、否則 NaT。
         golden: golden 基準——bool(n,) | (start,end) | float∈(0,1] 取前比例。``None``（預設）→ 取前 30%
             並發 ``RuntimeWarning``（提醒「前段為健康」是未經確認的啟發式假設，見模組免責，紅隊 B#3）。
+        impute: X 缺值處理。``None``（預設）＝**有 NaN 即 fail loud**（不靜默補值，避免延後到 fit 才晦澀崩）；
+            ``"median"``/``"ffill"`` ＝填補並發 ``RuntimeWarning``——填補**扭曲多變量關係**（本 index 監看的
+            對象），重缺值會稀釋飄移訊號，屬可轉移性風險（Rule 1），故須使用者明確選擇。Y/yq_ 的 NaN 是
+            **稀疏量測語義**、不在此處理。
         name: 資料集識別。
 
     Returns:
@@ -121,8 +145,25 @@ def from_frame(
     )
     out[TIMESTAMP] = np.asarray(ts, dtype="datetime64[ns]")
     out[GRADE_LABEL] = df[grade].astype(str).to_numpy() if grade is not None else "A"
-    for c in x_columns:
-        out[c] = df[c].to_numpy()
+    x_block = df[list(x_columns)].astype(float)
+    n_nan = int(x_block.isna().to_numpy().sum())
+    if n_nan:  # X 缺值：預設 fail loud（邊界即擋），impute 才填（並警告扭曲，紅隊桶4）
+        if impute is None:
+            raise ContractError(
+                f"X 含 {n_nan} 個缺值（NaN）；指定 impute='median'/'ffill' 或先清理。"
+                "不靜默補值——填補會扭曲多變量關係（本 index 監看的對象）。"
+            )
+        x_arr = _impute_x(x_block, impute)  # 先驗策略/全 NaN（raises），成功才警告（避免錯誤路徑漏警告）
+        warnings.warn(
+            f"from_frame: X 缺值以 impute='{impute}' 填補（{n_nan} 個）；填補扭曲多變量關係、稀釋飄移訊號，"
+            "重缺值請審慎（Rule 1）。",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    else:
+        x_arr = x_block.to_numpy()
+    for j, c in enumerate(x_columns):
+        out[c] = x_arr[:, j]
 
     yv = df[y_value].to_numpy(dtype=float) if y_value is not None else np.full(n, np.nan)
     out[Y_VALUE] = yv
