@@ -40,12 +40,15 @@ from .schemas import (
     SoftSensorResponse,
     TimelineResponse,
     YHealthCampaign,
+    YHealthIndexCampaign,
+    YHealthIndexResponse,
     YHealthResponse,
 )
 from ..adapters import tep
 from ..detectors.mspc import MSPCModel
 from ..detectors.soft_sensor import make_soft_sensor
 from ..interface import Y_VALUE
+from ..y_health import YHealthIndex
 from ..preprocess.align import delay_align_train, estimate_delay
 
 app = FastAPI(title="Health_Index API", version=__version__)
@@ -303,6 +306,50 @@ def yhealth(req: AnalyzeRequest) -> YHealthResponse:
             y_health=round(1.0 - rate, 4), y_flagged=rate > 0.5,
         ))
     return YHealthResponse(dataset_id=req.dataset_id, available=True, quality_vars=qcols, campaigns=out)
+
+
+@app.post("/yhealth_index", response_model=YHealthIndexResponse)
+def yhealth_index(req: AnalyzeRequest) -> YHealthIndexResponse:
+    """統一 Y 健康指標（桶2b）：per-campaign 融合 **映射健康**（X→Y 軟測量殘差）⊕ **分布健康**
+    （Y-MSPC）→ 單一 0–1，對稱於 X 側 /analyze 的 Health Index。
+
+    誠實標（Rule 12）：映射健康可靠需軟測量能泛化（密集 golden Y）；稀疏 Y（TEP）下其值低信度，
+    且 TEP 注入 drift 為 X-關係斷（Y 分布不變）→ 本就非 Y-訊號、由 X 側 L2 SPE 抓，故 drift 的 Y 健康
+    僅輕微低於 golden（非缺陷）。分量不可算回 null，融合僅用可用分量、不靜默補 0。
+    """
+    _ds, gt, fr, ds_seg, cols, hi = _prepare(req)
+    reentry = set(detect_reentry_campaigns(ds_seg))
+    qcols = [c for c in fr.columns if c.startswith("yq_")]
+    gm = np.asarray(gt.golden_mask)
+    Xg = _ds.frame.loc[gm, cols].to_numpy()
+    yg = _ds.frame.loc[gm, Y_VALUE].to_numpy()
+    Yqg = _ds.frame.loc[gm, qcols].to_numpy() if qcols else None
+    yhi = YHealthIndex(hi.config).fit(Xg, yg, Yqg)
+
+    camp_ids = fr[CAMPAIGN_ID].to_numpy()
+    grades = fr[GRADE_LABEL].to_numpy()
+    out: list[YHealthIndexCampaign] = []
+    for cid in sorted(int(c) for c in np.unique(camp_ids)):
+        m = camp_ids == cid
+        X = fr.loc[m, cols].to_numpy()
+        y = fr.loc[m, Y_VALUE].to_numpy()
+        Yq = fr.loc[m, qcols].to_numpy() if qcols else None
+        sub = yhi.subscores(X, y, Yq)
+        try:
+            yhealth = round(yhi.y_health(X, y, Yq), 4)
+        except ValueError:
+            yhealth = None  # 無可用分量（誠實回 null，不假裝）
+        out.append(
+            YHealthIndexCampaign(
+                campaign_id=cid,
+                grade=str(grades[m][0]),
+                is_reentry=cid in reentry,
+                y_health_index=yhealth,
+                map_health=None if sub["map"] is None else round(sub["map"], 4),
+                dist_health=None if sub["dist"] is None else round(sub["dist"], 4),
+            )
+        )
+    return YHealthIndexResponse(dataset_id=req.dataset_id, has_quality=bool(qcols), campaigns=out)
 
 
 @app.post("/series", response_model=SeriesResponse)

@@ -87,6 +87,27 @@ def test_yhealth_synthetic_unavailable():
     assert d["available"] is False and d["campaigns"] == []
 
 
+def test_yhealth_index_synthetic_hd_map_catches_drift():
+    # 桶2b 可達（紅隊 B-D1 教訓）：高維密集 Y → 統一 Y 健康經 /yhealth_index 端到端；純量品質 → 僅 map
+    # 分量，drift（X→Y 映射斷）Y 健康 < golden。
+    d = client.post("/yhealth_index", json={"dataset_id": "synthetic_hd", "seed": 5, "drift_strength": 1.2}).json()
+    assert d["has_quality"] is False
+    c = {x["campaign_id"]: x for x in d["campaigns"]}
+    assert c[0]["dist_health"] is None and c[0]["map_health"] is not None
+    assert c[4]["y_health_index"] < c[0]["y_health_index"] - 0.1   # drift Y 健康明顯低
+
+
+@pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
+def test_yhealth_index_tep_dist_catches_product_change():
+    # 桶2b（TEP 多維品質）：dist 分量抓換產品 B（G/H 比例變）→ Y 健康崩；golden 健康。誠實標：drift
+    # 為 X-關係斷、非 Y-訊號，故不要求 drift Y 健康強烈低（由 X 側 L2 抓）。
+    d = client.post("/yhealth_index", json={"dataset_id": "tep", "seed": 0, "drift_strength": 1.0}).json()
+    assert d["has_quality"] is True
+    c = {x["campaign_id"]: x for x in d["campaigns"]}
+    assert c[1]["dist_health"] < 0.2                                      # B 換產品 → 分布健康崩
+    assert c[0]["y_health_index"] > c[1]["y_health_index"] + 0.3          # golden 遠高於換產品
+
+
 @pytest.mark.skipif(not os.path.exists(_TEP_DATA), reason="TEP .mat 未下載（data/tep/）")
 def test_tep_softsensor_mapping_drift():
     # Y 健康（軟測量）：drift 段 X→Y 映射被破壞 → Ŷ 偏離實際 Y（量測層抓到）

@@ -142,3 +142,22 @@ class FwerResponse(BaseModel):
     dataset_id: str
     alpha: float
     campaigns: list[FwerCampaign]
+
+
+class YHealthIndexCampaign(BaseModel):
+    """單一 campaign 的統一 Y 健康（映射健康 ⊕ 分布健康融合；桶2b）。"""
+
+    campaign_id: int
+    grade: str
+    is_reentry: bool
+    y_health_index: float | None   # 融合 0–1（None＝無可用分量：窗無足夠 Y 觀測且無多維品質）
+    map_health: float | None       # X→Y 映射健康（軟測量殘差/帶）；None＝Y 觀測不足
+    dist_health: float | None      # Y 分布健康（Y-MSPC）；None＝純量品質無多維 Y
+
+
+class YHealthIndexResponse(BaseModel):
+    """統一 Y 健康指標（桶2b）：對稱於 X 側 HealthIndex；映射健康抓關係斷、分布健康抓分布移。"""
+
+    dataset_id: str
+    has_quality: bool              # 是否有多維品質欄（dist 分量可算）
+    campaigns: list[YHealthIndexCampaign]
