@@ -26,6 +26,13 @@ class Config:
     dqi_x_threshold_factor: float = 3.0  # DQI_x 門檻 = factor × MCD-support 內 90% trimmed mean
                                          # （刻意以 in-sample≈LOO 取代 AVM 原文 LOO，見 dqi_x.py docstring）
 
+    # --- L1/L4 高維／規模穩健（桶3）---
+    hd_min_n_over_p: float = 2.0     # n < 此×p → L1 啟動 PCA-score 預降維（MinCovDet 在 p≫n 靜默回奇異
+                                     # 協方差、cond 爆、汙染 DQI_x 距離且不 raise，Rule 12 靜默失敗）
+    hd_reduce_max_frac: float = 0.4  # 預降維維度 r ≤ floor(此×n)，確保降維後 n>2r、MCD 在 score 空間仍有效
+    hd_rank_rtol: float = 1e-9       # 有效數值秩容差：特徵值 > 此×max 才算真實方向（L4 截斷近零 noise 維，
+                                     # 免 per-component KS 在任意方向檢定並把 Bonferroni ×p 過度膨脹）
+
     # --- 前處理：分段/對齊 ---
     ssd_penalty: float = 10.0     # ruptures PELT penalty；須 TEP 掃描定值，勿硬信此預設
     transition_width: int = 10    # 換線/維修後 settling 段長度（排除於 golden-A baseline）
