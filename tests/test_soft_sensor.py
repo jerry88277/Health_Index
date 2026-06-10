@@ -183,3 +183,11 @@ def test_pls_deterministic():
     p1 = PLSSoftSensor().fit(X, y).predict(X[:10])
     p2 = PLSSoftSensor().fit(X, y).predict(X[:10])
     assert np.allclose(p1, p2)
+
+
+def test_pls_constant_x_fails_loud():
+    # 紅隊 A-D2：全常數 X → PLS deflation 內部 NaN crash，改在 fit 邊界 fail loud（清楚訊息）
+    import pytest
+
+    with pytest.raises(ValueError, match="常數"):
+        PLSSoftSensor().fit(np.ones((50, 5)), np.arange(50.0))

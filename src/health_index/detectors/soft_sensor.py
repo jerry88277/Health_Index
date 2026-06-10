@@ -119,8 +119,8 @@ class SoftSensor:
 @dataclass
 class PLSSoftSensor:
     """PLS 軟測量 + split-CP——**可擴展**(O(n·p·k)) 且對**共線/高維 X 穩健**，補 GPR(O(n³)、RBF 高維退化)
-    在「多製程參數 + 大資料集」的不足（桶2，泛化）。PLS 投影到潛在成分天然處理共線，多輸出 Y 友善
-    （本版以純量 Y 對齊既有 ``Y_VALUE`` 契約）。
+    在「多製程參數 + 大資料集」的不足（桶2，泛化）。PLS 投影到潛在成分天然處理共線；PLS 演算法
+    **天然支援多輸出 Y**，惟本版僅實作純量 Y（對齊既有 ``Y_VALUE`` 契約，多輸出列後續，紅隊 B-D2 誠實標）。
 
     與 ``SoftSensor`` **同介面**（fit/predict/calibrate_cp/cp_available/predict_interval），可由
     ``make_soft_sensor`` 依資料規模互換。可信度層同採 split-CP（model-agnostic，與 GPR 版共用
@@ -141,6 +141,8 @@ class PLSSoftSensor:
         self.x_mean_ = Xo.mean(axis=0)
         self.x_std_ = Xo.std(axis=0) + 1e-9
         Xs = (Xo - self.x_mean_) / self.x_std_
+        if float(Xs.std()) < 1e-9:  # 全常數 X：PLS deflation 會內部 NaN crash → fail loud（紅隊 A-D2）
+            raise ValueError("X 全為常數（無變異），PLS 無法訓練軟測量")
         ncomp = max(1, min(self.config.pls_components, Xs.shape[1], len(yo) - 1))
         self.n_components_ = ncomp
         self.pls_ = PLSRegression(n_components=ncomp, scale=False).fit(Xs, yo)

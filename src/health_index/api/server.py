@@ -54,8 +54,9 @@ _DATASETS = {
     "synthetic": "合成連續製程（grade A→B→A→C→A，注入隱性飄移）",
     "tep": "Tennessee Eastman 真實連續製程（Mode1/2/3 模態切換 + 注入隱性飄移；iid 重抽）",
     "tep_tp": "TEP（保時序）：連續不重抽、保真實自相關；隱性飄移由 AC-6/L2 SPE 偵測（②）",
+    "synthetic_hd": "高維合成（40 製程參數 + 密集軟量測 Y）：軟測量走 PLS（桶2a 可擴展示範）",
 }
-_DATASET_NVARS = {"synthetic": 10, "tep": 22, "tep_tp": 22}
+_DATASET_NVARS = {"synthetic": 10, "tep": 22, "tep_tp": 22, "synthetic_hd": 40}
 
 
 @app.get("/health")
@@ -85,6 +86,9 @@ def _prepare(req: AnalyzeRequest):
             drift_strength=min(req.drift_strength, 1.0),
             time_preserving=(req.dataset_id == "tep_tp"),
         )
+    elif req.dataset_id == "synthetic_hd":
+        # 高維（p=40>30）+ 密集 Y → /softsensor 自動走 PLS（桶2a 可達示範，非僅單測 scaffolding）
+        ds, gt = syn.generate(seed=req.seed, drift_strength=req.drift_strength, p=40, r=4, y_every=1)
     else:
         ds, gt = syn.generate(seed=req.seed, drift_strength=req.drift_strength)
     cols = list(ds.x_columns)
@@ -204,6 +208,9 @@ def softsensor(req: AnalyzeRequest) -> SoftSensorResponse:
     # 依資料規模自動選軟測量基底（桶2）：高維/大 n → PLS（可擴展、共線穩健）；否則 GPR（小資料友善）。
     # synthetic(p=10)/tep(p=22) 小資料 → GPR，行為不變（向後相容）。
     ss = make_soft_sensor(hi.config, n_samples=len(yg_al), n_features=len(cols)).fit(Xg_al, yg_al)
+    # 誠實標（紅隊 A-D1）：此處 CP 以**訓練同集** 校準（golden 標籤少，無法再切 disjoint calib），
+    # 違反 split-CP 可交換性 → 覆蓋率為**近似**、非 predict_interval docstring 的 disjoint 有限樣本保證；
+    # 高維 PLS 在此 in-sample 校準下會偏窄（紅隊實測）。標籤充裕的資料集應改傳 disjoint calib 集（後續）。
     ss.calibrate_cp(Xg_al, yg_al)
 
     X = fr[cols].to_numpy()

@@ -272,3 +272,13 @@ def test_softsensor_yhat_deviates_from_y_in_drift():
 
 def test_softsensor_unknown_dataset_404():
     assert client.post("/softsensor", json={"dataset_id": "nope"}).status_code == 404
+
+
+def test_synthetic_hd_softsensor_reachable_via_pls():
+    # 桶2a 可達性（紅隊 B-D1）：高維(p=40>30)合成集經 /softsensor 端到端跑通——選擇器選 PLS、密集 Y
+    # → split-CP 上線（PLS 為基底）。證 PLS 非僅單測 scaffolding，真有可達 server 路徑。
+    assert "synthetic_hd" in [d["id"] for d in client.get("/datasets").json()]
+    d = client.post("/softsensor", json={"dataset_id": "synthetic_hd", "seed": 5, "drift_strength": 1.2}).json()
+    assert len(d["yhat"]) == 1500 and d["cp_available"] is True and d["band_kind"] == "CP"
+    a = client.post("/analyze", json={"dataset_id": "synthetic_hd", "seed": 5, "drift_strength": 1.2}).json()
+    assert len(a["variables"]) == 40 and a["reentry_campaigns"] == [2, 4]  # 全鏈於 p=40 亦跑通
