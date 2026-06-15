@@ -8,7 +8,7 @@ builder，向後相容（既有入口完全不動，方案 A）。新資料集�
 from __future__ import annotations
 
 from ..interface import ProcessDataset
-from . import ccpp, synthetic, tep, uci_gas_drift
+from . import ccpp, steel, synthetic, tep, uci_gas_drift
 from .base import DatasetBuilder, GroundTruth, Segment
 
 
@@ -81,8 +81,8 @@ def _build_uci_gas_drift(**kw) -> tuple[ProcessDataset, GroundTruth]:
     )
 
 
-def _ccpp_segments(bounds: tuple) -> tuple[Segment, ...]:
-    """ccpp 的 ``(id, start, end, label)`` → Segment。"""
+def _id_segments(bounds: tuple) -> tuple[Segment, ...]:
+    """``(id, start, end, label)`` → Segment（ccpp / steel 等真實集共用形狀）。"""
     return tuple(Segment(id=int(i), start=int(s), end=int(e), label=str(g)) for i, s, e, g in bounds)
 
 
@@ -92,7 +92,7 @@ def _build_ccpp(**kw) -> tuple[ProcessDataset, GroundTruth]:
     return ds, GroundTruth(
         x_columns=gt.x_columns,
         golden_mask=gt.golden_mask,
-        segments=_ccpp_segments(gt.segment_bounds),
+        segments=_id_segments(gt.segment_bounds),
         drift_mask=gt.drift_mask,
     )
 
@@ -105,14 +105,35 @@ def _build_ccpp_covert(**kw) -> tuple[ProcessDataset, GroundTruth]:
     return _build_ccpp(**kw)
 
 
+def _build_steel(**kw) -> tuple[ProcessDataset, GroundTruth]:
+    """真實非化工含 Y（Steel，有真實時序）→ 統一 GroundTruth（drift_mask=None）。"""
+    ds, gt = steel.load(**kw)
+    return ds, GroundTruth(
+        x_columns=gt.x_columns,
+        golden_mask=gt.golden_mask,
+        segments=_id_segments(gt.segment_bounds),
+        drift_mask=gt.drift_mask,
+    )
+
+
+def _build_steel_covert(**kw) -> tuple[ProcessDataset, GroundTruth]:
+    """Steel + 半合成隱性漂移（明示 covert=True，矛盾即 fail loud）。"""
+    if kw.get("covert") is False:
+        raise ValueError("'steel_covert' 即注入隱性漂移模式，不可 covert=False；要純真實請改用 'steel'")
+    kw["covert"] = True
+    return _build_steel(**kw)
+
+
 _BUILDERS: dict[str, DatasetBuilder] = {
     "synthetic": _build_synthetic,
     "synthetic_pgn": _build_synthetic_pgn,  # 桶3b：p≫n，使 benchmark 涵蓋桶3 高維路徑
     "tep": _build_tep,
     "tep_tp": _build_tep_tp,
     "uci_gas_drift": _build_uci_gas_drift,
-    "ccpp": _build_ccpp,                      # 真實非化工含 Y（發電廠，drift_mask=None）
+    "ccpp": _build_ccpp,                      # 真實非化工含 Y（發電廠，shuffle 無時序，drift_mask=None）
     "ccpp_covert": _build_ccpp_covert,        # CCPP + 半合成隱性漂移（早於單變數 SPC）
+    "steel": _build_steel,                    # 真實非化工含 Y（鋼廠用電，有真實時序，drift_mask=None）
+    "steel_covert": _build_steel_covert,      # Steel + 半合成隱性漂移
 }
 
 
