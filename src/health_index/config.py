@@ -37,6 +37,9 @@ class Config:
     ssd_penalty: float = 10.0     # ruptures PELT penalty；須 TEP 掃描定值，勿硬信此預設
     transition_width: int = 10    # 換線/維修後 settling 段長度（排除於 golden-A baseline）
     cpd_min_size: int = 12        # ruptures 變點偵測最小段長（取代硬編 magic；紅隊建議）
+    golden_auto_min_frac: float = 0.12  # 桶4b golden='auto' 候選段最小長度佔比（變點切段後濾過短段）
+    golden_auto_ramp_max: float = 0.5   # 桶4b golden='auto' 段內 ramp 上限（標準化空間每特徵跨段漂移均值）：
+                                        # 超過＝段內非平穩(暫態/漸變)，不可當乾淨基準（紅隊 A：scoring 不可靠，改最早平穩段）
     y_max_lag: int = 10           # X→Y 延遲估計搜尋上限（步）
     x_lag_order: int = 2          # DPCA 時間落後階數；過大惡化 n/p（紅隊 H5）
 
