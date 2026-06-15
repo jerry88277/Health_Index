@@ -86,7 +86,9 @@ src/health_index/deploy/
       （synthetic 0→0.50、tep_tp 0.12→0.44，重蹈桶5 剃刀薄門檻）。**現行 per-sample 雖理論自相關下偏樂觀
       實證更穩健（FPR 0 vs 0.50）→ 維持 P1 per-sample**。自相關 HI-leg 殘留偏差屬可接受次要債（fwer 為權威軌）。
       (b) [x] acceptance fpr_ok/recall_ok 分開呈現 — AcceptanceReport.verdict()（紅隊 B#3）。
-      (c) [ ] is_alarm 統一為單一權威 alarm()（低優先，runner 已 union）。
+      (c) [x] is_alarm 統一為單一權威 `alarm()`（is_alarm ∨ fwer_alarm；**不改 is_alarm 本體**保 sentinel/
+      portability 契約；runner.poll_once 改經 alarm() 判決 DRY）— d037a80，≥2 紅隊 CONTRACT-SAFE（32-state
+      truth table 0 mismatch、is_alarm byte-identical）。
 - [x] G3：生產驗收報告（部署前 hold-out gate：golden FPR/recall/SPC-blind）— a3450cd（5 測試）
 - [x] G4：per-product 模型庫 + 時效評估（重建建議，需人決）+ 重建 — 6dd34b1（5 測試）
 - [ ] PISource 填實（現場，NOT VERIFIED→實測）
