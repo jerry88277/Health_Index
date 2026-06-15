@@ -80,6 +80,8 @@ class Config:
     dtw_threshold_k: float = 2.0  # 偏移門檻 = 參考批 LOO 距離 mean + k·std（k=2 ≈ 5% 正常 FPR）
 
     # --- 融合/決策 ---
+    fusion_severity_scale: float = 3.0  # P1：L1/L2 per-sample 標準化嚴重度 z → 健康 exp(-z/scale) 的衰減尺度；
+                                        # z=3（偏離 golden 3σ）→ 健康≈0.37；取代原「超限比例」之飽和（弱飄移漏報）
     drift_scale: float = 5.0          # L4 Wasserstein z → 健康子分數的衰減尺度（exp(-z/scale)）；TEP 校準
     hi_alarm_threshold: float = 0.6   # Health Index 告警門檻（< 即告警）；須 TEP 校準
     fusion_weights: tuple = (1.0, 2.0, 1.0)  # (L1, L2, L4) 融合權重；L2 為隱性飄移主訊號加重；M9 校準

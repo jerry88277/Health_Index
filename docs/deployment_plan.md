@@ -69,9 +69,13 @@ src/health_index/deploy/
 - [~] G2b：alarms 雙視圖 + sinks — demo 暫用 runner 內建 raw/persisted_alarm；雙視圖渲染列 Phase 2
 
 **Phase 2 — 新酒（正確性，後換）**
-- [ ] P1：融合層子分數改不飽和嚴重度/尾機率（重用 fwer 機制）；fwer_alarm 升為權威告警；HI 重校門檻
+- [x] P1：融合層子分數改不飽和標準化嚴重度 exp(−z/scale)（取代超限比例飽和）— ≥2 紅隊 FIX-FIRST 後修正。
+      實效：**L1 去飽和**（舊恆=1.0→隨域偏移單調）、三層語義一致、golden FPR=0、benchmark 通過。誠實邊界：
+      synthetic 舊 L2 本未飽和故增量主在 L1；最弱飄移由 fwer leg（runner union）補；**自相關窗級標準化低估
+      變異 2.2×**（_severity_health docstring 標）。fwer_alarm 權威由 runner 承載。
+- [x] 桶5 重開：P1 後 HI~0.93 dead-zone 變窄，固定 0.6 仍可移植（FPR≈0）但哨兵價值上升 — 已更新桶5 文件+哨兵 docstring。
 - [ ] P2：FWER block 路徑改時間連續 split（消 in-sample 樂觀，hold-out FPR 0.17→≤α）
-- [ ] 桶5 重開：P1 後在新 HI 分布重驗門檻可移植性
+- [ ] P1.5（後續桶）：自相關窗級 block-aware 標準化（徹底修自相關 covert drift 窗級鑑別力）；is_alarm 統一為單一權威 alarm()
 - [ ] G3：生產驗收報告
 - [ ] G4：模型庫 + 重建基準 + 哨兵
 - [ ] PISource 填實（現場，NOT VERIFIED→實測）
