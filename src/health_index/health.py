@@ -42,6 +42,12 @@ class HealthIndex:
         self.dqi_ = DQIxGate(self.config).fit(X_golden)
         self.mspc_ = MSPCModel(self.config).fit(X_golden)
         self.drift_ = DriftDetector(self.config).fit(X_golden)
+        # P1：golden per-sample DQI/SPE baseline（mean/std）供 subscores 的**不飽和嚴重度**標準化。
+        # 取代原「超限比例」（弱隱性飄移下飽和於高位→漏報）；per-sample 標準化使窗均值不受窗長影響。
+        dqi_g = self.dqi_.score(self._golden_)
+        spe_g = self.mspc_.spe(self._golden_)
+        self._dqi_mu_, self._dqi_sig_ = float(dqi_g.mean()), float(dqi_g.std() + 1e-9)
+        self._spe_mu_, self._spe_sig_ = float(spe_g.mean()), float(spe_g.std() + 1e-9)
         return self
 
     def _fit_fwer_calibration(self) -> None:
@@ -83,12 +89,34 @@ class HealthIndex:
             )
         self._fwer_ready_ = True
 
+    def _severity_health(self, stat: np.ndarray, mu: float, sig: float) -> float:
+        """per-sample 對 golden 標準化嚴重度 → exp 健康 → 窗均值（1=健康，不飽和）。
+
+        P1（紅隊+審查）：原 L1/L2「超限比例」把連續統計量用控制限二值化再取比例 → 弱隱性飄移下
+        多數樣本未破限 → 比例飽和於高位 → HI 漏報。改逐樣本標準化 z=clip((x−μ)/σ,0,∞)、exp(−z/scale)
+        後取窗均值：弱但一致的抬高使每樣本健康同步下滑、窗均值單調反映（不飽和），且 per-sample
+        標準化使結果不受窗長影響（與 L4 的 exp(−z/scale) 同構，跨層語義統一）。
+
+        誠實邊界（紅隊實證，Rule 12）：
+        - **自相關失效**：σ 為 golden **per-sample** std；自相關資料（連續 TEP，PC1 ρ₁≈0.93）的窗均值
+          變異 ≈ iid 預測（σ/√w）的 **2.2×** → 本標準化**低估窗級變異（anti-conservative）**，使 P1 融合對
+          真實連續製程的 covert drift **窗級鑑別力弱**（實測 tep_tp drift 窗 HI<0.6 recall≈0）；該訊號由
+          fwer_alarm（window-vs-window block-bootstrap，runner 已 union）扛起，非 P1 融合。徹底修需改窗級
+          block-aware 標準化（列後續）。
+        - **in-sample 樂觀**：μ/σ 取自 fit 的 golden（in-sample）；n/p 充足（生產尺寸 n≥~2p）時 hold-out
+          golden FPR 仍 0，但極端高維（n≈p）會低估 σ → hold-out golden 偶誤報（且 degraded_ 未必觸發）。
+        - **scale 為敏感度旋鈕非 FPR 旋鈕**：dead-zone 寬，golden FPR 對 scale 不敏感（實測各 scale 皆 0）；
+          scale 越小越敏感（recall↑）。預設 3.0 偏保守（防自相關 σ 低估下的誤報），非 recall 最佳。
+        """
+        z = np.clip((np.asarray(stat, dtype=float) - mu) / sig, 0.0, None)
+        return float(np.mean(np.exp(-z / self.config.fusion_severity_scale)))
+
     def subscores(self, X: np.ndarray) -> dict[str, float]:
-        """各層 0–1 健康子分數（1=健康；方向統一）。"""
-        s_l1 = float(self.dqi_.is_inlier(X).mean())          # 域內樣本比例
-        s_l2 = float(1.0 - self.mspc_.is_anomaly(X).mean())  # in-control 樣本比例
+        """各層 0–1 健康子分數（1=健康；方向統一）。三層皆為 exp(−標準化嚴重度) 形（P1 一致化）。"""
+        s_l1 = self._severity_health(self.dqi_.score(X), self._dqi_mu_, self._dqi_sig_)   # 域偏離嚴重度
+        s_l2 = self._severity_health(self.mspc_.spe(X), self._spe_mu_, self._spe_sig_)    # SPE 嚴重度（隱性飄移主訊號）
         z = float(self.drift_.wasserstein_magnitude(X))
-        s_l4 = float(np.exp(-max(z, 0.0) / self.config.drift_scale))  # 漂移越大越低
+        s_l4 = float(np.exp(-max(z, 0.0) / self.config.drift_scale))  # 漂移量級（已是標準化嚴重度形）
         return {"L1": s_l1, "L2": s_l2, "L4": s_l4}
 
     def health_index(self, X: np.ndarray) -> float:
@@ -108,6 +136,9 @@ class HealthIndex:
         """融合趨勢 + 硬閘雙軌告警（H8 安全網）：融合分數低於門檻，或任一單層硬閘破限。
 
         註（B3）：此為 H8 雙軌（非嚴格 FWER）。需 golden 誤報率受 α 控制（AC-6）時用 ``fwer_alarm``。
+        P1 後 ``is_alarm`` 維持「便宜快路徑」語義（不納入 fwer，以保 sentinel/portability 的「只用 golden、
+        零行為改變」契約）；**權威告警＝is_alarm ∨ fwer_alarm 的聯集由 runner.poll_once 承載**（線上實際出口），
+        對最弱飄移（ds≲0.3）由 fwer leg 補（deployment_plan §6 P1）。將 is_alarm 統一為單一權威 alarm() 列後續桶。
         """
         return bool(self.health_index(X) < self.config.hi_alarm_threshold or any(self.hard_gates(X).values()))
 
@@ -117,13 +148,15 @@ class HealthIndex:
         """門檻可移植性哨兵：只用 golden 算窗級 HI floor，逼近告警門檻則 fail-loud（Rule 12）。
 
         桶5 調查結論（``docs/decision_threshold_calibration.md``，經 ≥2 紅隊複審）：固定
-        ``hi_alarm_threshold=0.6`` 在現行 ≥9 種資料集（含真實 penicillin/半導體）golden FPR≈0，因 HI
-        對 golden 自正規化（仿射等變）→ golden floor 遠高於門檻的寬 dead-zone。**per-dataset 自動校準
-        not warranted**（有 recall 收益但 hold-out FPR 代價 0.62–0.75 不可接受；真實失效屬偵測力非門檻）。
+        ``hi_alarm_threshold=0.6`` 下 golden FPR≈0，**per-dataset 自動校準 not warranted**（有 recall 收益
+        但 hold-out FPR 代價不可接受；真實失效屬偵測力非門檻）。
 
-        但 dead-zone 是資料相依的：未來資料集若 golden HI floor **真實**逼近門檻（平穩 golden、非 §3.3
-        的非平穩假象），固定門檻會誤報或對輕微 drift 漏報。本哨兵**只用 golden**（無需 drift 標籤 → 泛化
-        場景可操作）在 floor 逼近門檻時 warn。**不自動改門檻**（校準經驗證 not warranted）。
+        **P1 後重檢（桶5 重開，紅隊實證）**：P1 把子分數改不飽和嚴重度後，golden HI 由 ~0.98 降至 ~0.93、
+        dead-zone **變窄**（synthetic floor~0.86、tep_tp~0.80、真實 indpensim 窗級 floor 已逼近甚至偶破 0.6，
+        median 仍 ~0.97 故 golden FPR 仍≈0）。結論：固定 0.6 對現行資料集**仍可移植**（FPR≈0），但「floor
+        遠高於門檻」的舊論述不再普遍成立 → **本哨兵的價值在 P1 後上升**（dead-zone 不再寬到可忽略）。
+
+        本哨兵**只用 golden**（無需 drift 標籤 → 泛化場景可操作）在 floor 逼近門檻時 warn。**不自動改門檻**。
 
         Args:
             X_golden: golden 樣本（須為平穩代表性 golden；非平穩段會低估 floor 製造假警，見決策文件 §3.3）。

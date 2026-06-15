@@ -5,6 +5,14 @@
 > （明確指示「嘗試證明校準需要、推翻此結論」），兩隊獨立裁決 **AGREE-NOT-WARRANTED**；其揪出的
 > 偏誤已併入下文（§4 靈敏度、§3 window、§3 仿射、§5 可操作哨兵、§6 cross-ref）。
 
+> [!IMPORTANT] **P1 更新（2026-06-15，桶5 重開）— 下方 §3 數據基於 P1 前的舊融合（HI~0.98）**
+> P1 把融合層子分數由「超限比例」改為「不飽和標準化嚴重度 exp(−z/scale)」後，HI 分布下移：
+> golden HI median ~0.98 → **~0.93**；dead-zone 變窄（synthetic floor~0.86、tep_tp~0.80、真實 indpensim
+> 窗級 floor 已逼近/偶破 0.6，惟 median~0.97 故 golden FPR 仍≈0，≥2 紅隊實證）。
+> **結論不變**（固定 0.6 對現行資料集仍可移植、自動校準仍 not warranted），**但**§3.2「子分數＝域內/
+> in-control 比例」「floor≥0.90 結構性」描述的是**已被 P1 取代的舊實作**，僅存為歷史；可移植性的安全
+> 邊際縮小 → `check_threshold_portability` 哨兵價值上升（見其 docstring 的 P1 重檢段）。
+
 ---
 
 ## 1. 問題（第一性原理）
