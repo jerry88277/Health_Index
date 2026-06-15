@@ -66,7 +66,7 @@ src/health_index/deploy/
 - [x] G2a：sources(FrameSource/Replay) + runner poll_once + persistence_k — e1ff4d4（8 測試，resume-safe）
 - [x] UI：4 步 demo orchestration（demo.py）+ Dash 殼（demo_app.py，HTTP 200 跑通）— 6 測試
 - [x] 端到端整合：公開資料集跑通 demo（golden 健康/換產品+殘留飄移告警/乾淨回歸不誤報）
-- [~] G2b：alarms 雙視圖 + sinks — demo 暫用 runner 內建 raw/persisted_alarm；雙視圖渲染列 Phase 2
+- [x] G2b：alarms 雙視圖（操作員零術語紅綠燈+去查哪裡 / 工程師分層+p-value+RBC+版本）+ AlarmSink — 6 測試
 
 **Phase 2 — 新酒（正確性，後換）**
 - [x] P1：融合層子分數改不飽和標準化嚴重度 exp(−z/scale)（取代超限比例飽和）— ≥2 紅隊 FIX-FIRST 後修正。
