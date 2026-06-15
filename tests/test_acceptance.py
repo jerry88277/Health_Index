@@ -1,0 +1,72 @@
+"""G3 生產驗收報告 WHY 測試（Rule 9）。
+
+WHY：部署 gate 的存在理由＝**在 hold-out golden 上確認 golden 不誤報、事故抓得到、SPC 盲**，
+擋下不該上線的模型。當 gate 變成 rubber-stamp（對壞輸入也 PASS）時，下列測試失敗。
+hold-out 用時間連續 split（保自相關、避桶5 §3.3 非平穩假象）。
+"""
+
+import numpy as np
+import pytest
+
+from health_index.adapters import registry
+from health_index.deploy.acceptance import AcceptanceReport, acceptance_from_dataset, acceptance_report
+from health_index.deploy.bundle import build_bundle
+from health_index.health import HealthIndex
+
+
+def _bundle(seed=5, ds=1.2):
+    d, gt = registry.build("synthetic", seed=seed, drift_strength=ds)
+    cols = list(gt.x_columns)
+    gm = np.asarray(gt.golden_mask)
+    gidx = np.flatnonzero(gm)
+    cut = gidx[0] + len(gidx) // 2
+    Xfit = d.frame.iloc[gidx[gidx < cut]][cols].to_numpy()
+    Xhold = d.frame.iloc[gidx[gidx >= cut]][cols].to_numpy()
+    Xdrift = d.frame.loc[np.asarray(gt.drift_mask), cols].to_numpy()
+    b = build_bundle("A", HealthIndex().fit(Xfit), cols, golden=Xfit, created_at="t")
+    return b, Xhold, Xdrift
+
+
+def test_acceptance_passes_good_model():
+    """marquee：好模型在 hold-out golden 上 FPR≤目標、事故 recall 高、SPC 盲 → PASS。"""
+    r = acceptance_from_dataset("synthetic", seed=5, drift_strength=1.2, window=40, compute_fwer=False)
+    assert r.holdout_golden_fpr <= 0.05 and r.fpr_ok
+    assert r.drift_recall > 0.5 and r.recall_ok
+    assert r.spc_blind is True
+    assert r.passed
+
+
+def test_acceptance_fpr_gate_is_falsifiable():
+    """WHY（gate 非 rubber-stamp）：把**事故段當作 hold-out golden** 餵入 → FPR 應爆高 → fpr_ok=False
+    → 不 PASS。證明 FPR gate 真的會擋（而非恆 PASS）。"""
+    b, _Xhold, Xdrift = _bundle()
+    r = acceptance_report(b, Xdrift, target_fpr=0.05, window=40, compute_fwer=False)  # drift 冒充 golden
+    assert r.holdout_golden_fpr > 0.5 and r.fpr_ok is False and r.passed is False
+
+
+def test_acceptance_recall_gate_catches_blind_model():
+    """WHY：模型在事故段抓不到（recall 低）→ recall_ok=False → 不 PASS。用「golden 當 drift」模擬
+    無訊號（健康段不該觸發）→ recall≈0 → gate 擋。"""
+    b, Xhold, _ = _bundle()
+    r = acceptance_report(b, Xhold, target_fpr=0.5, window=40, drift=Xhold, compute_fwer=False)  # drift=golden→無事故訊號
+    assert r.drift_recall < 0.5 and r.recall_ok is False and r.passed is False
+
+
+def test_acceptance_report_passed_skips_na_criteria():
+    """WHY（誠實標）：無事故標記時 recall/spc 判準回 None、不計入 passed；passed 僅看適用判準。"""
+    r = AcceptanceReport(
+        product="A", window=40, n_golden_holdout=100, holdout_golden_fpr=0.0, golden_floor=0.9,
+        drift_recall=None, spc_exceedance_excess=None, fpr_ok=True, recall_ok=None, spc_blind=None,
+    )
+    assert r.passed is True
+    r2 = AcceptanceReport(**{**r.__dict__, "fpr_ok": False})
+    assert r2.passed is False
+
+
+def test_acceptance_uses_holdout_not_fit_set():
+    """WHY（誠實 hold-out）：報告的 golden FPR 來自與 fit disjoint 的 hold-out 段（非 in-sample 自評）。
+    n_golden_holdout 應為 golden 後半、非全段。"""
+    d, gt = registry.build("synthetic", seed=5)
+    n_golden = int(np.asarray(gt.golden_mask).sum())
+    r = acceptance_from_dataset("synthetic", seed=5, holdout_frac=0.5, window=40, compute_fwer=False)
+    assert 0 < r.n_golden_holdout < n_golden  # 只用 hold-out 段（約半）
