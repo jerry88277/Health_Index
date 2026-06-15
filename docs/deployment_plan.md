@@ -91,6 +91,12 @@ src/health_index/deploy/
       truth table 0 mismatch、is_alarm byte-identical）。
 - [x] G3：生產驗收報告（部署前 hold-out gate：golden FPR/recall/SPC-blind）— a3450cd（5 測試）
 - [x] G4：per-product 模型庫 + 時效評估（重建建議，需人決）+ 重建 — 6dd34b1（5 測試）
+- [x] **C 系列（2026-06-15 續推；使用者「demo 看不到 GSI/RI 等詳細指標」）**：
+      - C1：demo 攤開 GSI/T²/SPE/RBC/p-value（時間線 hover + 點選下鑽 `window_detail`）— c567833。
+      - C2：`HealthIndex.confidence(X)`＝**T² 操作域可信度**（HI 判讀信心值；改名不沿用 AVM RI；≥2 紅隊揪出
+        GSI 版與 health 冗餘 r≈0.998→改 T² r≈0.39）；軟測量 `YHealthIndex` 接進 `bundle.y_health`，demo 顯示
+        Ŷ+conformal+X→Y `map_health`（正交可信度）— d552184。covert CCPP marquee：health 低/confidence 高＝可信告警。
+      - B：CCPP 真實非化工含 Y（`ccpp`/`ccpp_covert`）— 2138632（roadmap §4 / DoD #2 達成）。
 - [ ] PISource 填實（現場，NOT VERIFIED→實測）
 
 ## 7. Demo 驗收（DoD）
