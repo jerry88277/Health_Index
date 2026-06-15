@@ -15,8 +15,9 @@ import numpy as np
 from ..adapters import registry
 from ..health import HealthIndex
 from ..interface import GRADE_LABEL
+from .alarms import build_alarm_event
 from .bundle import build_bundle, load, save
-from .runner import run_replay
+from .runner import WindowScore, run_replay
 from .sources import FrameSource
 
 
@@ -140,22 +141,95 @@ def score_timeline(
             return "clean_reentry"  # 同 golden grade、非 golden 段、非 drift＝乾淨回歸
         return "other"
 
-    points = [
-        {
-            "start": s.start,
-            "end": s.end,
-            "health_index": round(s.health_index, 4),
-            "raw_alarm": s.raw_alarm,
-            "persisted_alarm": s.persisted_alarm,
-            "consecutive": s.consecutive,
-            "region": region(s.start, s.end),
-            "subscores": {k: round(v, 3) for k, v in s.subscores.items()},
-        }
-        for s in scores
-    ]
+    m = bundle.health.mspc_
+    points = []
+    for s in scores:
+        Xw = src.x_slice(s.start, s.end)
+        points.append(
+            {
+                "start": s.start,
+                "end": s.end,
+                "health_index": round(s.health_index, 4),
+                "raw_alarm": s.raw_alarm,
+                "persisted_alarm": s.persisted_alarm,
+                "consecutive": s.consecutive,
+                "region": region(s.start, s.end),
+                "subscores": {k: round(v, 3) for k, v in s.subscores.items()},
+                # X-only 多變量指標（cheap，無 permutation）：供時間線呈現「SPE 升起」等 AVM 細節（C1）
+                "spe_mean": round(float(m.spe(Xw).mean()), 4),
+                "t2_mean": round(float(m.t2(Xw).mean()), 4),
+                "gsi_mean": round(float(m.gsi(Xw).mean()), 4),
+            }
+        )
     return {
         "product": bundle.product,
         "window": int(window),
         "points": points,
         "n_alarms": int(sum(p["persisted_alarm"] for p in points)),
     }
+
+
+def window_detail(
+    bundle_path: str,
+    name: str,
+    start: int,
+    end: int,
+    *,
+    compute_fwer: bool = True,
+    **build_kwargs,
+) -> dict:
+    """單一窗的**詳細 AVM 指標**（點選時間線某窗時的下鑽，C1）：GSI/T²/SPE 原始值與控制限、RBC 肇因
+    排行、各層 p-value 與分層語義（重用 alarms.engineer_view）。
+
+    回答使用者「demo 看不到 GSI/RI 等詳細指標」：本函式把偵測器內部量（原 subscores 摺疊掉的 GSI/T²/SPE/
+    RBC/p-value）攤開供工程師下鑽。Y 側（軟測量 Ŷ + 可信度）在 C2 另接（需 bundle.y_health）。
+
+    Args:
+        bundle_path: 已存檔 bundle 路徑（載入走指紋 verify）。
+        name: 資料集名（重建以取該窗 X）。
+        start, end: 窗的列區間 [start, end)。
+        compute_fwer: 是否算各層 p-value（較貴；False 則 p_value 全 None）。
+
+    Returns:
+        dict：engineer_view（layers/rbc_ranking/model_version）+ ``mspc``（GSI/T²/SPE 原始與限、越限比例）
+        + ``subscores`` + ``fwer_pvalues`` + ``alarm``/``is_alarm``。
+    """
+    bundle = load(bundle_path)
+    ds, _gt = registry.build(name, **build_kwargs)
+    cols = list(bundle.x_columns)
+    X = ds.frame.iloc[int(start) : int(end)][cols].to_numpy(dtype=float)
+    hi = bundle.health
+    m = hi.mspc_
+    t2, spe, gsi = m.t2(X), m.spe(X), m.gsi(X)
+    fwer = None
+    if compute_fwer:
+        try:
+            fwer = {k: float(v) for k, v in hi.fwer_pvalues(X).items()}
+        except Exception:  # 校準不可用（golden 太小等）→ p_value 留 None，不中斷下鑽
+            fwer = None
+    score = WindowScore(
+        start=int(start),
+        end=int(end),
+        health_index=float(hi.health_index(X)),
+        subscores={k: float(v) for k, v in hi.subscores(X).items()},
+        hard_gates={k: bool(v) for k, v in hi.hard_gates(X).items()},
+        raw_alarm=bool(hi.alarm(X, compute_fwer=compute_fwer, _pvalues=fwer)),
+        persisted_alarm=False,
+        consecutive=0,
+        fwer=fwer,
+    )
+    detail = build_alarm_event(bundle, score, X).engineer_view()  # layers + rbc_ranking + model_version
+    detail["alarm"] = score.raw_alarm
+    detail["is_alarm"] = bool(hi.is_alarm(X))
+    detail["subscores"] = {k: round(v, 4) for k, v in score.subscores.items()}
+    detail["fwer_pvalues"] = {k: round(float(v), 4) for k, v in fwer.items()} if fwer else None
+    detail["mspc"] = {  # AVM 原始量（subscores 摺疊掉的細節）
+        "GSI_mean": round(float(gsi.mean()), 4),
+        "T2_mean": round(float(t2.mean()), 4),
+        "T2_limit": round(float(m.t2_lim_), 4),
+        "T2_exceed_frac": round(float((t2 > m.t2_lim_).mean()), 4),
+        "SPE_mean": round(float(spe.mean()), 4),
+        "SPE_limit": round(float(m.spe_lim_), 4),
+        "SPE_exceed_frac": round(float((spe > m.spe_lim_).mean()), 4),
+    }
+    return detail

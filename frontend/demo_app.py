@@ -63,6 +63,9 @@ app.layout = html.Div(
             html.Button("執行線上模擬", id="btn-run", n_clicks=0, style={"padding": "8px 16px", "fontWeight": "bold"}),
             dcc.Loading(html.Div(id="run-status", style={"marginTop": "10px", "fontSize": "18px", "fontWeight": "bold"})),
             dcc.Loading(dcc.Graph(id="timeline")),
+            html.P("點選時間線上任一窗 → 下方顯示該窗詳細指標（GSI / T² / SPE 與控制限、RBC 肇因排行、各層 p-value）。",
+                   style={"color": "#666", "fontSize": "13px"}),
+            dcc.Loading(html.Div(id="window-detail")),
         ]),
     ],
 )
@@ -128,8 +131,14 @@ def _run(_n, bundle, name, window):
     xs = [p["start"] for p in pts]
     his = [p["health_index"] for p in pts]
     colors = [_REGION_COLOR[p["region"]] for p in pts]
+    # hover 帶 X-only AVM 指標（SPE/GSI）+ region 白話；點選某窗再下鑽全細節
+    custom = [[p["spe_mean"], p["gsi_mean"], _REGION_ZH[p["region"]]] for p in pts]
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=xs, y=his, mode="lines+markers", marker={"color": colors, "size": 9}, line={"color": "#999"}, name="健康指標"))
+    fig.add_trace(go.Scatter(
+        x=xs, y=his, mode="lines+markers", marker={"color": colors, "size": 9}, line={"color": "#999"},
+        name="健康指標", customdata=custom,
+        hovertemplate="樣本 %{x}<br>健康度 %{y:.3f}<br>SPE %{customdata[0]}　GSI %{customdata[1]}<br>%{customdata[2]}<extra></extra>",
+    ))
     # 告警標記
     al = [(p["start"], p["health_index"]) for p in pts if p["persisted_alarm"]]
     if al:
@@ -139,6 +148,48 @@ def _run(_n, bundle, name, window):
     n_alarm = tl["n_alarms"]
     status = html.Span(f"{'⚠ 偵測到 ' + str(n_alarm) + ' 個告警窗（製程關係偏移）' if n_alarm else '✅ 全程健康'}", style={"color": "#c62828" if n_alarm else "#2e7d32"})
     return status, fig
+
+
+@app.callback(
+    Output("window-detail", "children"),
+    Input("timeline", "clickData"),
+    State("bundle-store", "data"), State("dataset", "value"), State("window", "value"),
+    prevent_initial_call=True,
+)
+def _detail(click, bundle, name, window):
+    """點選時間線某窗 → 下鑽詳細 AVM 指標（demo.window_detail；C1 回應『看不到 GSI/RI 等細節』）。"""
+    if not bundle or not click:
+        return ""
+    start = int(click["points"][0]["x"])
+    end = start + int(window)
+    try:
+        d = demo.window_detail(bundle["bundle_path"], name, start, end, compute_fwer=True)
+    except Exception as e:
+        return html.Span(f"❌ 詳細指標載入失敗：{e}", style={"color": "#c62828"})
+    mspc, pv = d["mspc"], (d["fwer_pvalues"] or {})
+    rows = [
+        html.Tr([
+            html.Td(d["layers"][k]["name"]), html.Td(k),
+            html.Td("⚠" if d["layers"][k]["unhealthy"] else "✅"),
+            html.Td(str(pv.get(k, "—"))),
+            html.Td(d["layers"][k]["action"], style={"color": "#666", "fontSize": "12px"}),
+        ]) for k in ("L1", "L2", "L4")
+    ]
+    rbc_top = "、".join(f"{v}({s})" for v, s in d["rbc_ranking"][:5])
+    return _card([
+        html.H5(f"窗 [{start}:{end}] 詳細指標　{'⚠ 告警' if d['alarm'] else '✅ 正常'}"),
+        html.Div(
+            f"GSI {mspc['GSI_mean']}　|　T² {mspc['T2_mean']} / 限 {mspc['T2_limit']}（越限 {mspc['T2_exceed_frac']:.0%}）"
+            f"　|　SPE {mspc['SPE_mean']} / 限 {mspc['SPE_limit']}（越限 {mspc['SPE_exceed_frac']:.0%}）",
+            style={"marginBottom": "8px"},
+        ),
+        html.Table(
+            [html.Thead(html.Tr([html.Th(h) for h in ("層", "代號", "狀態", "p-value", "建議檢查")]))] + [html.Tbody(rows)],
+            style={"width": "100%", "fontSize": "13px", "borderCollapse": "collapse"},
+        ),
+        html.Div(f"RBC 肇因排行 (top5)：{rbc_top}", style={"marginTop": "8px"}),
+        html.Div(f"模型版本：{d['model_version']}", style={"color": "#888", "fontSize": "12px", "marginTop": "4px"}),
+    ])
 
 
 if __name__ == "__main__":

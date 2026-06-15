@@ -60,6 +60,48 @@ def test_score_timeline_reflects_dod(tmp_path):
     assert tl["n_alarms"] > 0
 
 
+def test_score_timeline_carries_mspc_metrics(tmp_path):
+    """C1 WHY：時間線每窗帶 X-only AVM 指標（GSI/T²/SPE 均值）——使 demo 能呈現「SPE 升起」等細節，
+    非只有摺疊後的 health_index。drift 窗 SPE 均值須明顯高於 golden 窗（marquee）。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    tl = demo.score_timeline(m["bundle_path"], "synthetic", window=60, seed=5, drift_strength=1.2)
+    p0 = tl["points"][0]
+    assert {"spe_mean", "t2_mean", "gsi_mean"} <= set(p0)
+    by = {}
+    for p in tl["points"]:
+        by.setdefault(p["region"], []).append(p)
+    golden_spe = max(p["spe_mean"] for p in by["golden"])
+    drift_spe = min(p["spe_mean"] for p in by["drift"])
+    assert drift_spe > golden_spe  # SPE 在 drift 窗升起（隱性飄移主訊號）
+
+
+def test_window_detail_surfaces_gsi_rbc_pvalues(tmp_path):
+    """C1 marquee：window_detail 攤開 subscores 摺疊掉的 AVM 細節——GSI/T²/SPE 原始與限、RBC 肇因排行、
+    各層 p-value 與分層語義。drift 窗 SPE 越限比例高、RBC 排行非空。回應『看不到 GSI/RI 等詳細指標』。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    # 取一個 drift 窗（synthetic 最後一段 A_drift）
+    from health_index.adapters import synthetic as syn
+
+    _ds, gt = syn.generate(seed=5, drift_strength=1.2)
+    didx = np.flatnonzero(np.asarray(gt.drift_mask))
+    s0 = int(didx[0])
+    d = demo.window_detail(m["bundle_path"], "synthetic", s0, s0 + 60, compute_fwer=True, seed=5, drift_strength=1.2)
+    assert {"GSI_mean", "T2_mean", "T2_limit", "SPE_mean", "SPE_limit", "SPE_exceed_frac"} <= set(d["mspc"])
+    assert d["mspc"]["SPE_exceed_frac"] > 0.3            # drift 窗 SPE 大幅越限
+    assert len(d["rbc_ranking"]) == 10 and d["rbc_ranking"][0][1] >= d["rbc_ranking"][-1][1]  # 降序排行
+    assert set(d["fwer_pvalues"]) == {"L1", "L2", "L4"}  # 各層 p-value 攤開
+    assert all(d["layers"][k]["name"] for k in ("L1", "L2", "L4"))  # 分層語義
+    assert d["alarm"] is True                            # drift 窗告警
+
+
+def test_window_detail_compute_fwer_false_skips_pvalues(tmp_path):
+    """WHY（成本旋鈕）：compute_fwer=False 時 p_value 全 None、仍給 GSI/T²/SPE/RBC（cheap 路徑）。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5)
+    d = demo.window_detail(m["bundle_path"], "synthetic", 0, 60, compute_fwer=False, seed=5)
+    assert d["fwer_pvalues"] is None
+    assert d["mspc"]["GSI_mean"] >= 0 and len(d["rbc_ranking"]) > 0
+
+
 def test_score_timeline_rejects_corrupt_bundle(tmp_path):
     """WHY：步驟4 載入 bundle 走 verify——指紋不符（版本漂移/損毀）拒載，不靜默用壞模型評分。"""
     m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5)
