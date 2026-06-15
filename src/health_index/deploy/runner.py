@@ -5,7 +5,7 @@ D2 決策（docs/deployment_plan.md §4）：純函式 + 外部排程器驅動�
 
 線上語義：每次 poll 處理自上次游標以來「已到齊」的新完整窗（非重疊滑窗），更新連續告警計數；
 連續 ``persistence_k`` 窗告警才升為 persisted_alarm（濾單窗毛刺，config.drift_persistence_k 接線）。
-告警採 **is_alarm OR fwer_alarm 聯集**（粗融合漏的由 AC-6 校準偵測器補；對應審查 P5 方向）。
+告警判決收口於 ``HealthIndex.alarm()``（is_alarm ∨ fwer_alarm 聯集；粗融合漏的由 AC-6 校準偵測器補）。
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class WindowScore:
     health_index: float
     subscores: dict[str, float]
     hard_gates: dict[str, bool]
-    raw_alarm: bool  # 單窗：is_alarm OR fwer_alarm
+    raw_alarm: bool  # 單窗 HealthIndex.alarm()：is_alarm ∨ fwer_alarm
     persisted_alarm: bool  # 連續 persistence_k 窗皆 raw_alarm
     consecutive: int  # 截至本窗的連續告警數
     fwer: dict[str, float] | None = None  # 各層 p-value（compute_fwer 時）
@@ -87,14 +87,18 @@ def poll_once(
         h = float(hi.health_index(X))
         sub = {k: float(v) for k, v in hi.subscores(X).items()}
         gates = {k: bool(v) for k, v in hi.hard_gates(X).items()}
-        raw = bool(hi.is_alarm(X))
+        # 告警判決收口於 HealthIndex.alarm()（is_alarm ∨ fwer_alarm 聯集；不再於此自拼）。
+        # p-value 先算一次供工程師視圖展示（fwer 欄），並以 _pvalues 傳入 alarm() 避免重算（Rule 6）。
+        pv = None
         fwer = None
         if compute_fwer:
             try:
-                fwer = {k: float(v) for k, v in hi.fwer_pvalues(X).items()}
-                raw = raw or bool(hi.fwer_alarm(X))
+                pv = hi.fwer_pvalues(X)
+                fwer = {k: float(v) for k, v in pv.items()}
             except Exception:  # FWER 校準不可用（golden 太小等）→ 退回 is_alarm 快路徑，不中斷線上評分
+                pv = None
                 fwer = None
+        raw = bool(hi.alarm(X, compute_fwer=compute_fwer and pv is not None, _pvalues=pv))
         cons = cons + 1 if raw else 0
         out.append(
             WindowScore(

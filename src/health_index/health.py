@@ -160,8 +160,8 @@ class HealthIndex:
 
         註（B3）：此為 H8 雙軌（非嚴格 FWER）。需 golden 誤報率受 α 控制（AC-6）時用 ``fwer_alarm``。
         P1 後 ``is_alarm`` 維持「便宜快路徑」語義（不納入 fwer，以保 sentinel/portability 的「只用 golden、
-        零行為改變」契約）；**權威告警＝is_alarm ∨ fwer_alarm 的聯集由 runner.poll_once 承載**（線上實際出口），
-        對最弱飄移（ds≲0.3）由 fwer leg 補（deployment_plan §6 P1）。將 is_alarm 統一為單一權威 alarm() 列後續桶。
+        零行為改變」契約）；**權威告警＝is_alarm ∨ fwer_alarm 的聯集已收口於 ``alarm()``**（線上 runner.poll_once
+        經 ``alarm()`` 判決），對最弱飄移（ds≲0.3）由 fwer leg 補（deployment_plan §6 P1）。
         """
         return bool(self.health_index(X) < self.config.hi_alarm_threshold or any(self.hard_gates(X).values()))
 
@@ -281,14 +281,58 @@ class HealthIndex:
         count = sum(float(rng.permutation(pooled)[:nn].mean()) >= obs for _ in range(B))
         return (1 + count) / (B + 1)
 
-    def fwer_alarm(self, X: np.ndarray, *, alpha: float | None = None) -> bool:
+    def fwer_alarm(
+        self, X: np.ndarray, *, alpha: float | None = None, _pvalues: dict[str, float] | None = None
+    ) -> bool:
         """AC-6 單一決策點：3 層 p-value 經 **Holm 校正**，任一拒絕虛無即告警。
 
         取代 ``is_alarm`` 的裸 OR（紅隊 N2）：在 golden-A null 下 Holm 保證族系錯誤率（FWER）≤ alpha
         → golden 誤報率受控（AC-6）。``is_alarm``（H8 雙軌硬閘）保留為安全網，兩者語義不同、並存。
+
+        Args:
+            _pvalues: 內部優化——已算好 ``fwer_pvalues`` 時傳入避免重算（如 ``alarm()``/runner 共用同一窗
+                的 p-value）；一般呼叫端留 None 由本方法自算。
         """
         alpha = self.config.fwer_alpha if alpha is None else alpha
-        return any(_holm_reject(self.fwer_pvalues(X), alpha).values())
+        pv = self.fwer_pvalues(X) if _pvalues is None else _pvalues
+        return any(_holm_reject(pv, alpha).values())
+
+    def alarm(
+        self, X: np.ndarray, *, compute_fwer: bool = True, alpha: float | None = None,
+        _pvalues: dict[str, float] | None = None,
+    ) -> bool:
+        """**單一權威告警出口**：``is_alarm``（H8 雙軌快路徑）∨ ``fwer_alarm``（AC-6 嚴格 FWER）。
+
+        統一線上判決——此前該聯集由各呼叫端（runner.poll_once）自拼，最弱飄移（ds≲0.3）只由 fwer leg
+        補（deployment_plan §6 P1）。收口為單一加法方法（紅隊指引：**不改 is_alarm 本體**以保
+        sentinel/portability『只用 golden、零行為改變』契約 → 改以本方法承載聯集語義）。
+
+        韌性（fail-safe，與 runner 既有 try/except 同口徑）：fwer 較貴且可能因校準不足（golden 太小）/
+        數值問題拋例外 → 退回 is_alarm 快路徑結果並 ``warn``（寧可少 fwer leg 也不讓線上判決崩；不確定性
+        surface 不靜默，Rule 12）。短路：is_alarm 已 True 時聯集必 True，不再花 fwer 成本（Rule 6）。
+
+        Args:
+            X: 待評窗 (n, p)。
+            compute_fwer: False → 只跑 is_alarm 快路徑（省 permutation/bootstrap，Rule 6）。
+            alpha: fwer 的 FWER 水準（None→config.fwer_alpha）。
+            _pvalues: **內部優化**——呼叫端（如 runner 需 p-value 作工程師視圖展示）已算好 ``fwer_pvalues``
+                時傳入避免重算；一般呼叫端勿用、留 None 由本方法自算。
+
+        Returns:
+            bool（任一軌告警即 True）。
+        """
+        base = bool(self.is_alarm(X))
+        if base or not compute_fwer:
+            return base  # 已告警（聯集必 True）或關閉 fwer → 不花 fwer 成本
+        try:
+            return self.fwer_alarm(X, alpha=alpha, _pvalues=_pvalues)
+        except Exception:  # fwer 校準/數值失敗 → 退回 is_alarm（fail-safe），surface 不靜默
+            warnings.warn(
+                "fwer 計算失敗，alarm() 退回 is_alarm 快路徑（本窗少 FWER leg）",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return base
 
 
 def _holm_reject(pvalues: dict[str, float], alpha: float) -> dict[str, bool]:
