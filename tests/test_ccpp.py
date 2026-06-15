@@ -86,6 +86,36 @@ def test_covert_is_spc_blind_but_spe_catches(covert):
     assert spe_exc_drift > uni_drift_max + 0.2         # 多變量 ≫ 單變數（早於 SPC 的量化）
 
 
+def test_demo_soft_sensor_surfaces_yhat_on_real_dense_y(real, tmp_path):
+    """C2 marquee（真實 Y）：CCPP dense Y → bundle 帶 YHealthIndex；window_detail 在 golden 窗給
+    Ŷ + conformal（CP 可用，golden n>cp_min_calibration=200）+ Y-confirmed map_health（X→Y 成立→高）
+    + confidence。real fixture 確保資料在（否則 skip）。"""
+    from health_index.deploy import demo
+
+    m = demo.build_and_save_model("ccpp", models_dir=str(tmp_path), created_at="t")
+    assert m["has_y_health"] is True
+    d = demo.window_detail(m["bundle_path"], "ccpp", 0, 60, compute_fwer=False)
+    ss = d["soft_sensor"]
+    assert ss["available"] and ss["cp_available"] is True   # golden 3827 > cp_min_calibration=200 → CP 上線
+    assert ss["n_y_obs"] == 60                              # 真實連續 Y（dense）
+    assert ss["map_health"] is not None and ss["map_health"] > 0.5  # golden 段 X→Y 關係成立→高可信
+    assert 0.0 < d["confidence"] <= 1.0
+
+
+def test_covert_confidence_stays_high_while_health_drops(covert):
+    """C2 marquee（confidence(T²) 與 health 互補）：covert 隱性飄移＝相關結構斷但操作點仍在 golden 包絡內
+    → health 低（偵測到離流形）但 confidence 高（操作點在域內 → 可信告警，非外推）。這是 T² 版可信度的
+    存在價值（GSI 版會跟著掉、淪為 health 冗餘）。"""
+    dc, gtc = covert
+    cols = list(gtc.x_columns)
+    Xg = dc.frame.loc[gtc.golden_mask, cols].to_numpy()
+    Xd = dc.frame.loc[gtc.drift_mask, cols].to_numpy()
+    hi = HealthIndex().fit(Xg)
+    assert hi.health_index(Xd) < 0.6   # 偵測到隱性飄移
+    assert hi.confidence(Xd) > 0.8     # 但操作點在包絡內 → 高可信（可信的告警）
+    assert hi.confidence(Xg) > 0.8     # golden 也高可信
+
+
 def test_covert_golden_healthy_drift_alarms(covert):
     """DoD：covert 集上 golden 健康（HI 高、不告警），drift 段告警（HI 低）。"""
     dc, gtc = covert

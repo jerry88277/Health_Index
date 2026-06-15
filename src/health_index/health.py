@@ -48,6 +48,9 @@ class HealthIndex:
         spe_g = self.mspc_.spe(self._golden_)
         self._dqi_mu_, self._dqi_sig_ = float(dqi_g.mean()), float(dqi_g.std() + 1e-9)
         self._spe_mu_, self._spe_sig_ = float(spe_g.mean()), float(spe_g.std() + 1e-9)
+        # C2：golden T² baseline 供 confidence()（操作域相似度＝AVM 相似度閘精神；用穩健 T² 非數值不穩 GSI）。
+        t2_g = self.mspc_.t2(self._golden_)
+        self._t2_mu_, self._t2_sig_ = float(t2_g.mean()), float(t2_g.std() + 1e-9)
         return self
 
     def _fit_fwer_calibration(self) -> None:
@@ -146,6 +149,43 @@ class HealthIndex:
         """0–1 融合健康分數（1=健康）。"""
         s = self.subscores(X)
         return float(np.average([s["L1"], s["L2"], s["L4"]], weights=self.config.fusion_weights))
+
+    def confidence(self, X: np.ndarray) -> float:
+        """0–1 **可信度**：此窗 ``health_index`` 判讀的**操作域可信度**（1=完全可信）。
+
+        使用者意圖：一個「健康指標的信心值」。本實作＝**T² 對 golden 的操作域相似度**——X 操作點落在建模
+        golden 的 Mahalanobis 包絡內（T²≈golden）→ HI 為內插、可信；落在包絡外（T²≫golden）→ HI 為**外推**、
+        判讀應保留。取 AVM「相似度可靠度閘」精神，但用**穩健的 T²**（保留主成分子空間 Mahalanobis）而非
+        數值不穩的 GSI（``mspc.py`` 已定 T²/SPE 為 GSI 穩健替身；紅隊實證 GSI 版與 health 冗餘 r≈0.998），
+        且**刻意不沿用 AVM RI 名與雙模型法**（紅隊 H1/C3 已以 conformal 取代 RI）。形式與 subscores 同構
+        （per-sample 標準化嚴重度→exp→窗均值，不飽和、與窗長無關）。
+
+        與 health 的關係（紅隊實證，誠實標 Rule 12）：confidence(T²) 與 health **低相關**（synthetic 窗級
+        r≈0.39）——量不同軸：**health**＝偏離 golden 程度（L1 效度/L2 SPE 離流形/L4 分佈移）；**confidence**＝
+        操作點是否在建模包絡內（T²）。關鍵互補：**隱性飄移（相關結構斷、操作點仍在包絡內，如 covert CCPP）
+        → health 低但 confidence 高**＝『可信的告警』（真實離流形偵測非外推）；**操作點大幅外移 → confidence
+        低**＝HI 判讀為外推應保留。正交的 X→Y 模型可信度（軟測量 conformal 覆蓋，需 Y）見
+        ``YHealthIndex.map_health`` / ``demo.window_detail`` 軟測量區塊。
+
+        誠實邊界：(1) per-sample 標準化於**自相關**資料低估窗級變異（同 ``_severity_health``；T² 受影響較
+        SPE 小但仍存在）→ 連續製程 hold-out golden confidence 可能偏低變動。(2) 近常數欄（golden std≈0）經
+        標準化會使 T²（及 SPE/GSI）對微小絕對位移過敏——此為 MSPC ``_std`` 全鏈共有特性（health 亦同），
+        非 confidence 獨有。(3) 極端外推時 exp 可 underflow 至 0.0。(4) confidence **僅量保留子空間 T² 距離，
+        by-design 對殘差空間（SPE）離流形新穎性不敏感**——離流形軸由 health 的 L2 SPE/hard_gates 與
+        ``map_health`` 承載（故「操作點在包絡內但離流形」＝低 health＋高 confidence＝可信告警，非低可信）。
+
+        Returns:
+            float ∈ [0, 1]。舊版 bundle 無 ``_t2_mu_`` 基線時由 ``self._golden_`` 重算（不 fail）。
+        """
+        t2 = self.mspc_.t2(np.asarray(X, dtype=float))
+        mu = getattr(self, "_t2_mu_", None)
+        if mu is None:  # 舊 pickle 無基線（fit 前未存）→ 由 golden 重算，韌性不 AttributeError
+            g = self.mspc_.t2(self._golden_)
+            mu, sig = float(g.mean()), float(g.std() + 1e-9)
+        else:
+            sig = self._t2_sig_
+        z = np.clip((t2 - mu) / sig, 0.0, None)
+        return float(np.mean(np.exp(-z / self.config.fusion_severity_scale)))
 
     def hard_gates(self, X: np.ndarray) -> dict[str, bool]:
         """單層硬閘（任一 True＝該層嚴重破限）；避免致命破壞被融合稀釋。"""

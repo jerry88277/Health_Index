@@ -102,6 +102,48 @@ def test_window_detail_compute_fwer_false_skips_pvalues(tmp_path):
     assert d["mspc"]["GSI_mean"] >= 0 and len(d["rbc_ranking"]) > 0
 
 
+def test_build_populates_y_health_when_y_present(tmp_path):
+    """C2 WHY：建模偵測到軟量測 Y → 一併 fit YHealthIndex 存入 bundle（供顯示 Ŷ/可信度）。synthetic
+    有稀疏 Y → y_health 應就位、has_y_health=True。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    assert m["has_y_health"] is True
+    from health_index.deploy.bundle import load
+
+    assert load(m["bundle_path"]).y_health is not None
+
+
+def test_score_timeline_carries_confidence(tmp_path):
+    """C2 WHY：時間線每窗帶 confidence（HI 判讀可信度＝GSI 域相似度）。golden 窗可信度高（在域內）。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    tl = demo.score_timeline(m["bundle_path"], "synthetic", window=60, seed=5, drift_strength=1.2)
+    assert "confidence" in tl["points"][0]
+    by = {}
+    for p in tl["points"]:
+        by.setdefault(p["region"], []).append(p)
+    assert all(0.0 <= p["confidence"] <= 1.0 for p in tl["points"])  # 極端外推可 underflow 至 0
+    assert min(p["confidence"] for p in by["golden"]) > 0.7  # golden 在建模域內→高可信
+
+
+def test_window_detail_has_confidence_and_soft_sensor(tmp_path):
+    """C2：window_detail 帶 confidence + 軟測量區塊（available/n_y_obs；有 Y 觀測時 Ŷ）。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    d = demo.window_detail(m["bundle_path"], "synthetic", 0, 60, compute_fwer=False, seed=5, drift_strength=1.2)
+    assert 0.0 < d["confidence"] <= 1.0
+    assert d["soft_sensor"]["available"] is True
+    assert "n_y_obs" in d["soft_sensor"]
+    if d["soft_sensor"]["n_y_obs"] > 0:
+        assert "yhat_mean" in d["soft_sensor"]  # 有 Y 觀測→給 Ŷ
+
+
+def test_window_detail_no_y_health_when_y_insufficient(tmp_path):
+    """C2 WHY（紅隊 RT2-g，誠實降級路徑）：Y 不足（synthetic_pgn golden Y 筆數 ≪ p=128，n≤p）→ bundle
+    無 y_health → window_detail 軟測量區塊 available=False。鎖住「無 Y 時不假裝有軟測量」（非恆 available）。"""
+    m = demo.build_and_save_model("synthetic_pgn", models_dir=str(tmp_path), created_at="t", seed=5)
+    assert m["has_y_health"] is False
+    d = demo.window_detail(m["bundle_path"], "synthetic_pgn", 0, 60, compute_fwer=False, seed=5)
+    assert d["soft_sensor"]["available"] is False
+
+
 def test_score_timeline_rejects_corrupt_bundle(tmp_path):
     """WHY：步驟4 載入 bundle 走 verify——指紋不符（版本漂移/損毀）拒載，不靜默用壞模型評分。"""
     m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5)

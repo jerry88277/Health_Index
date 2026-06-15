@@ -139,6 +139,11 @@ def _run(_n, bundle, name, window):
         name="健康指標", customdata=custom,
         hovertemplate="樣本 %{x}<br>健康度 %{y:.3f}<br>SPE %{customdata[0]}　GSI %{customdata[1]}<br>%{customdata[2]}<extra></extra>",
     ))
+    # 可信度（HI 判讀的域相似度信心；低＝外推、HI 判讀應保留）——虛線疊同軸
+    fig.add_trace(go.Scatter(
+        x=xs, y=[p["confidence"] for p in pts], mode="lines", line={"color": "#1565c0", "dash": "dot"},
+        name="可信度", hovertemplate="樣本 %{x}<br>可信度 %{y:.3f}<extra></extra>",
+    ))
     # 告警標記
     al = [(p["start"], p["health_index"]) for p in pts if p["persisted_alarm"]]
     if al:
@@ -176,8 +181,25 @@ def _detail(click, bundle, name, window):
         ]) for k in ("L1", "L2", "L4")
     ]
     rbc_top = "、".join(f"{v}({s})" for v, s in d["rbc_ranking"][:5])
+    ss = d.get("soft_sensor", {})
+    if not ss.get("available"):
+        ss_line = "軟測量（Ŷ / 可信度）：此模型無 Y 標的（未提供軟量測）。"
+    elif ss.get("n_y_obs", 0) > 0:
+        mh = ss.get("map_health")
+        ss_line = (
+            f"軟測量：Ŷ {ss['yhat_mean']}　實際 Y {ss['y_actual_mean']}　±帶 {ss['band_half_mean']}"
+            f"（{'conformal' if ss['cp_available'] else 'std 近似'}，{ss['n_y_obs']} 筆 Y）"
+            f"　X→Y 可信度（Y-confirmed）：{mh if mh is not None else '觀測不足'}"
+        )
+    else:
+        ss_line = "軟測量：本窗尚無 Y 到達（延遲量測）——待 Y 落地後給 Ŷ 與 X→Y 可信度。"
     return _card([
         html.H5(f"窗 [{start}:{end}] 詳細指標　{'⚠ 告警' if d['alarm'] else '✅ 正常'}"),
+        html.Div(
+            f"健康度 {d['subscores']}　|　可信度 {d['confidence']}"
+            "（操作域相似度 T²；低＝操作點超出建模包絡、HI 為外推應保留。低健康＋高可信＝可信的告警）",
+            style={"marginBottom": "6px", "fontWeight": "bold"},
+        ),
         html.Div(
             f"GSI {mspc['GSI_mean']}　|　T² {mspc['T2_mean']} / 限 {mspc['T2_limit']}（越限 {mspc['T2_exceed_frac']:.0%}）"
             f"　|　SPE {mspc['SPE_mean']} / 限 {mspc['SPE_limit']}（越限 {mspc['SPE_exceed_frac']:.0%}）",
@@ -188,6 +210,7 @@ def _detail(click, bundle, name, window):
             style={"width": "100%", "fontSize": "13px", "borderCollapse": "collapse"},
         ),
         html.Div(f"RBC 肇因排行 (top5)：{rbc_top}", style={"marginTop": "8px"}),
+        html.Div(ss_line, style={"marginTop": "6px", "color": "#1565c0"}),
         html.Div(f"模型版本：{d['model_version']}", style={"color": "#888", "fontSize": "12px", "marginTop": "4px"}),
     ])
 

@@ -9,12 +9,15 @@
 from __future__ import annotations
 
 import os
+import warnings
 
 import numpy as np
 
 from ..adapters import registry
+from ..config import DEFAULT
 from ..health import HealthIndex
-from ..interface import GRADE_LABEL
+from ..interface import GRADE_LABEL, Y_VALUE
+from ..y_health import YHealthIndex
 from .alarms import build_alarm_event
 from .bundle import build_bundle, load, save
 from .runner import WindowScore, run_replay
@@ -75,12 +78,22 @@ def build_and_save_model(
         gm = np.asarray(gt.golden_mask)
     else:  # 使用者選 (start,end) / 'auto' / 比例 → 重用 from_frame 的 golden 解析
         from ..adapters.dataframe import _resolve_golden
-        from ..config import DEFAULT
 
         gm = _resolve_golden(golden, len(fr), x_arr=fr[cols].to_numpy(dtype=float), config=DEFAULT)
     Xg = fr.loc[gm, cols].to_numpy(dtype=float)
     hi = HealthIndex().fit(Xg)
-    bundle = build_bundle(product or name, hi, cols, golden=Xg, created_at=created_at)
+    # C2：有軟量測 Y 時一併 fit YHealthIndex 存入 bundle（供 demo 顯示 Ŷ + Y-confirmed 可信度）。
+    # 閘 n>p（非僅 ≥2）：避免退化軟測量（紅隊 RT2：n≤p 時 GPR/PLS 過擬合→band=0、has_y_health 過度承諾）。
+    y_health = None
+    if Y_VALUE in fr.columns:
+        yg = fr.loc[gm, Y_VALUE].to_numpy(dtype=float)
+        if int(np.isfinite(yg).sum()) >= max(2, Xg.shape[1] + 1):
+            try:
+                y_health = YHealthIndex().fit(Xg, yg)
+            except (ValueError, RuntimeError) as e:  # 訓練不足/常數X等 → 無 Y 健康；warn surface 不靜默（Rule 12）
+                warnings.warn(f"YHealthIndex fit 失敗（{e}）→ bundle 無 Y 健康", RuntimeWarning, stacklevel=2)
+                y_health = None
+    bundle = build_bundle(product or name, hi, cols, golden=Xg, created_at=created_at, y_health=y_health)
     os.makedirs(models_dir, exist_ok=True)
     path = os.path.join(models_dir, f"{product or name}.joblib")
     save(bundle, path)
@@ -91,6 +104,7 @@ def build_and_save_model(
         "golden_range": [int(gidx[0]), int(gidx[-1] + 1)] if gidx.size else None,
         "fingerprint_hi": float(bundle.fingerprint_hi),
         "n_golden": int(len(Xg)),
+        "has_y_health": bundle.y_health is not None,  # 有軟量測→demo 可顯示 Ŷ + Y-confirmed 可信度
     }
 
 
@@ -159,6 +173,7 @@ def score_timeline(
                 "spe_mean": round(float(m.spe(Xw).mean()), 4),
                 "t2_mean": round(float(m.t2(Xw).mean()), 4),
                 "gsi_mean": round(float(m.gsi(Xw).mean()), 4),
+                "confidence": round(float(bundle.health.confidence(Xw)), 4),  # C2：HI 判讀可信度（域相似度）
             }
         )
     return {
@@ -232,4 +247,28 @@ def window_detail(
         "SPE_limit": round(float(m.spe_lim_), 4),
         "SPE_exceed_frac": round(float((spe > m.spe_lim_).mean()), 4),
     }
+    detail["confidence"] = round(float(hi.confidence(X)), 4)  # C2：HI 判讀可信度（T² 操作域相似度）
+    # 軟測量區塊（Y 側）：Ŷ + conformal 帶 + Y-confirmed 可信度（X→Y 模型是否還成立，正交於 X 側 HI）。
+    yh = bundle.y_health
+    if yh is None:
+        detail["soft_sensor"] = {"available": False}
+    else:
+        yw = ds.frame.iloc[int(start) : int(end)][Y_VALUE].to_numpy(dtype=float)
+        obs = np.isfinite(yw)
+        n_obs = int(obs.sum())
+        ss_block: dict = {"available": True, "n_y_obs": n_obs, "cp_available": bool(yh.ss_.cp_available)}
+        if n_obs > 0:
+            Xo = X[obs]
+            yhat = yh.ss_.predict(Xo)
+            band = yh._band_half(Xo)  # CP 半寬 or 2×std（與 /softsensor 同邏輯，內部 helper 重用）
+            mh = yh.map_health(X, yw)  # Y-confirmed 可信度（殘差相對可信帶）；觀測 < y_map_min_obs 回 None
+            ss_block.update(
+                {
+                    "yhat_mean": round(float(np.mean(yhat)), 4),
+                    "y_actual_mean": round(float(np.mean(yw[obs])), 4),
+                    "band_half_mean": round(float(np.mean(band)), 4),
+                    "map_health": round(float(mh), 4) if mh is not None else None,
+                }
+            )
+        detail["soft_sensor"] = ss_block
     return detail
