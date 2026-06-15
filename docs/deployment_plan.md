@@ -83,8 +83,8 @@ src/health_index/deploy/
       （需 L4 處理 + 平穩 golden）。弱 drift window-level recall trade-off 見 fwer_pvalues docstring。
 - [ ] P1.5（後續桶）：自相關窗級 block-aware 標準化（HI leg + L4 非平穩）；is_alarm 統一為單一權威 alarm()；
       acceptance 的 fpr_ok/recall_ok 分開呈現（紅隊 B#3，避免使用者誤判整體爛）
-- [ ] G3：生產驗收報告
-- [ ] G4：模型庫 + 重建基準 + 哨兵
+- [x] G3：生產驗收報告（部署前 hold-out gate：golden FPR/recall/SPC-blind）— a3450cd（5 測試）
+- [x] G4：per-product 模型庫 + 時效評估（重建建議，需人決）+ 重建 — 6dd34b1（5 測試）
 - [ ] PISource 填實（現場，NOT VERIFIED→實測）
 
 ## 7. Demo 驗收（DoD）
