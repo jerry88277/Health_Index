@@ -46,6 +46,20 @@ class AcceptanceReport:
                 checks.append(c)
         return all(checks)
 
+    def verdict(self) -> str:
+        """**逐判準**人類可讀結論（紅隊 B#3：passed=False 須區分 FPR 失敗 vs recall 失敗 vs SPC，
+        避免使用者把『校準不足』與『弱 drift 偵測力不足』誤讀為『模型整體爛』）。"""
+        if self.passed:
+            return "PASS：可部署"
+        fails = []
+        if not self.fpr_ok:
+            fails.append(f"golden 誤報率 {self.holdout_golden_fpr} 過高（校準/golden 平穩性不足，非偵測力問題）")
+        if self.recall_ok is False:
+            fails.append(f"事故 recall {self.drift_recall} 偏低（偵測力不足；弱 drift 需更大窗/full-segment 或更強特徵）")
+        if self.spc_blind is False:
+            fails.append("事故其實單變數 SPC 抓得到（非隱性飄移情境）")
+        return "FAIL：" + "；".join(fails)
+
 
 def _frame_source(X: np.ndarray, x_columns) -> FrameSource:
     import pandas as pd

@@ -63,6 +63,18 @@ def test_acceptance_report_passed_skips_na_criteria():
     assert r2.passed is False
 
 
+def test_verdict_distinguishes_fpr_vs_recall_failure():
+    """WHY（紅隊 B#3）：verdict 須區分 FPR 失敗（校準/平穩性）vs recall 失敗（偵測力），不讓使用者
+    把兩種截然不同的故障誤讀為『模型整體爛』。"""
+    base = dict(product="A", window=40, n_golden_holdout=100, golden_floor=0.9, spc_exceedance_excess=0.0, spc_blind=True)
+    fpr_fail = AcceptanceReport(holdout_golden_fpr=0.3, drift_recall=0.9, fpr_ok=False, recall_ok=True, **base)
+    assert "誤報率" in fpr_fail.verdict() and "recall" not in fpr_fail.verdict().split("；")[0]
+    recall_fail = AcceptanceReport(holdout_golden_fpr=0.0, drift_recall=0.1, fpr_ok=True, recall_ok=False, **base)
+    assert "偵測力" in recall_fail.verdict()
+    ok = AcceptanceReport(holdout_golden_fpr=0.0, drift_recall=0.9, fpr_ok=True, recall_ok=True, **base)
+    assert ok.verdict().startswith("PASS")
+
+
 def test_acceptance_uses_holdout_not_fit_set():
     """WHY（誠實 hold-out）：報告的 golden FPR 來自與 fit disjoint 的 hold-out 段（非 in-sample 自評）。
     n_golden_holdout 應為 golden 後半、非全段。"""
