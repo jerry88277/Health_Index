@@ -81,8 +81,12 @@ src/health_index/deploy/
       acceptance 50% hold-out split 下 ~0.08，**殘留由非平穩 golden（桶5 §3.3）主導，非校準 bug**——
       acceptance 會 surface（gate 作用）。原計畫「0.17→≤α」為 stale 數字且 P2 單獨結構上達不到 ≤α
       （需 L4 處理 + 平穩 golden）。弱 drift window-level recall trade-off 見 fwer_pvalues docstring。
-- [ ] P1.5（後續桶）：自相關窗級 block-aware 標準化（HI leg + L4 非平穩）；is_alarm 統一為單一權威 alarm()；
-      acceptance 的 fpr_ok/recall_ok 分開呈現（紅隊 B#3，避免使用者誤判整體爛）
+- [~] P1.5：(a) HI-leg 窗級 block-aware 標準化 — **investigated → NOT WARRANTED**（2026-06-15 原型）：
+      窗均值對 golden 窗均值分布標準化時 σ_window 極小→門檻剃刀薄→hold-out golden FPR **爆炸**
+      （synthetic 0→0.50、tep_tp 0.12→0.44，重蹈桶5 剃刀薄門檻）。**現行 per-sample 雖理論自相關下偏樂觀
+      實證更穩健（FPR 0 vs 0.50）→ 維持 P1 per-sample**。自相關 HI-leg 殘留偏差屬可接受次要債（fwer 為權威軌）。
+      (b) [x] acceptance fpr_ok/recall_ok 分開呈現 — AcceptanceReport.verdict()（紅隊 B#3）。
+      (c) [ ] is_alarm 統一為單一權威 alarm()（低優先，runner 已 union）。
 - [x] G3：生產驗收報告（部署前 hold-out gate：golden FPR/recall/SPC-blind）— a3450cd（5 測試）
 - [x] G4：per-product 模型庫 + 時效評估（重建建議，需人決）+ 重建 — 6dd34b1（5 測試）
 - [ ] PISource 填實（現場，NOT VERIFIED→實測）
