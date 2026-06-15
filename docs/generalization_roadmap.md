@@ -114,10 +114,13 @@
 - **先做**：桶 1（解鎖一切）。**完成後 2/3/4 三路可平行**（彼此無相依，分屬 detector/Y/preprocess 不同模組）。
 - **後做**：桶 6（需 1 的協定）、桶 5（需資料集 + 偵測器就緒）。
 - **新資料集候選（非化工，含 Y 軟量測）**：
-  - ✅ **發電廠 CCPP（已建，2138632）**：UCI #294，9568 列，X=AT/V/AP/RH、**真實連續 Y=PE 淨發電量**。
-    註冊 `ccpp`（real，drift_mask=None）+ `ccpp_covert`（真實特徵基底注入隱性漂移：hub 欄部分置換去相關，
-    marginal 精確保留→單變數 SPC 盲、SPE 0.01→0.46 抓到）。**§5 DoD #2「≥3 結構不同資料集含真實非化工 Y」達成**。
-  - 待辦候選：半導體 SECOM、鋼鐵能耗、風機 SCADA（NOT VERIFIED，需逐筆查證可用性與授權）。
+  - ✅ **發電廠 CCPP（已建，2138632）**：UCI #294，9568 列，X=AT/V/AP/RH、**真實連續 Y=PE 淨發電量**
+    （Folds5x2 shuffle，無真實時序）。`ccpp` + `ccpp_covert`（hub 部分置換去相關，SPE 0.01→0.46）。
+  - ✅ **鋼廠用電 Steel（已建，182b1ba）**：UCI #851，35040 列，X=4 電氣特徵、**真實連續 Y=Usage_kWh**，
+    **有真實 15 分鐘時序**（與 CCPP 結構互補）。`steel` + `steel_covert`（SPE 0.01→0.30）。排除 CO2(Y代理)/NSM(時間)。
+  - **§5 DoD #2「≥3 結構不同資料集含真實非化工 Y」達成**（synthetic/TEP + CCPP + Steel，兩個真實非化工含 Y）。
+  - 待辦候選：半導體 SECOM（**註：Y 為 pass/fail 分類非連續軟量測**，適高維-real 非軟測量；需分類軟測量路徑）、
+    風機 SCADA（多為 Kaggle 認證，離線難取）（NOT VERIFIED）。
 
 ---
 
