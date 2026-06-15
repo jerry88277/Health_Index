@@ -74,8 +74,15 @@ src/health_index/deploy/
       synthetic 舊 L2 本未飽和故增量主在 L1；最弱飄移由 fwer leg（runner union）補；**自相關窗級標準化低估
       變異 2.2×**（_severity_health docstring 標）。fwer_alarm 權威由 runner 承載。
 - [x] 桶5 重開：P1 後 HI~0.93 dead-zone 變窄，固定 0.6 仍可移植（FPR≈0）但哨兵價值上升 — 已更新桶5 文件+哨兵 docstring。
-- [ ] P2：FWER block 路徑改時間連續 split（消 in-sample 樂觀，hold-out FPR 0.17→≤α）
-- [ ] P1.5（後續桶）：自相關窗級 block-aware 標準化（徹底修自相關 covert drift 窗級鑑別力）；is_alarm 統一為單一權威 alarm()
+- [x] P2：FWER block 路徑改時間連續 split（fit 前 2/3 連續段、L1/L2 null 取後 1/3 out-of-sample；
+      **L4 例外保持 fit 全 golden**——紅隊 A#4 揪出 P2 原把 L4 也 split 致非平穩後段誤報 0.04→0.12）。
+      實效（≥2 紅隊實證）：**L2 in-sample 樂觀 0.44→0.04**（真正修好）；iid 路徑逐位元相容。
+      **誠實邊界（未達 AC-6 ≤α 之處）**：整體 fwer golden FPR 在 production（full golden）≈0.04≈α，但
+      acceptance 50% hold-out split 下 ~0.08，**殘留由非平穩 golden（桶5 §3.3）主導，非校準 bug**——
+      acceptance 會 surface（gate 作用）。原計畫「0.17→≤α」為 stale 數字且 P2 單獨結構上達不到 ≤α
+      （需 L4 處理 + 平穩 golden）。弱 drift window-level recall trade-off 見 fwer_pvalues docstring。
+- [ ] P1.5（後續桶）：自相關窗級 block-aware 標準化（HI leg + L4 非平穩）；is_alarm 統一為單一權威 alarm()；
+      acceptance 的 fpr_ok/recall_ok 分開呈現（紅隊 B#3，避免使用者誤判整體爛）
 - [ ] G3：生產驗收報告
 - [ ] G4：模型庫 + 重建基準 + 哨兵
 - [ ] PISource 填實（現場，NOT VERIFIED→實測）

@@ -61,32 +61,55 @@ class HealthIndex:
         """
         G = self._golden_
         n = len(G)
-        ncal = n // 3
         mind = self.config.min_samples_per_dim
-        # 自相關 golden（連續 TEP，drift_.block_len_>1）→ L2/L4 改 window-vs-window 自校準（消 permutation
-        # 假 iid 的過度拒絕）；iid（synthetic，=1）→ 維原 split + permutation（統計等價向後相容）。
         self._fwer_l2_block_ = self.drift_.block_len_ > 1
-        if ncal >= mind and (n - ncal) >= 2 * mind:
-            perm = np.random.default_rng(self.config.random_state).permutation(n)
-            self._fwer_cal_ = G[perm[:ncal]]
-            gfit = G[perm[ncal:]]
-            self._fwer_dqi_ = DQIxGate(self.config).fit(gfit)
-            # L2/L4 的 p-value **本即自校準**（null 取自自身 golden 連續窗，不用 calib split）→ 自相關時
-            # fit 於 **保序全 golden**（非 shuffled gfit），維 block-bootstrap 時序：否則 shuffle 毀自相關 →
-            # 退回假 iid null → 連續乾淨回歸誤報（②的 L4 與本次的 L2）。iid 時 L2 維 split gfit（向後相容）。
-            self._fwer_mspc_ = MSPCModel(self.config).fit(G if self._fwer_l2_block_ else gfit)
-            self._fwer_drift_ = DriftDetector(self.config).fit(G)
-            self._fwer_split_ = True
+        self._fwer_block_cal_ = None
+        if self._fwer_l2_block_:
+            # 自相關（連續 TEP）→ **P2：時間連續 split**（fit 前 2/3 連續段保自相關；null 取後 1/3 連續段
+            # out-of-sample）。修正原「fit 全 golden + null 取 in-sample」之樂觀——實證 tep_tp hold-out golden
+            # fwer FPR 0.44（in-sample 看似正常）。連續 split 同時滿足「保序（block-bootstrap 前提）」與
+            # 「out-of-sample（split 校準前提）」——二者非互斥，原註解誤當 trade-off（審查 P2 / 紅隊診斷）。
+            n_fit = (2 * n) // 3
+            if n_fit >= 2 * mind and (n - n_fit) >= mind:
+                gfit = G[:n_fit]  # 連續前段（保自相關）
+                self._fwer_cal_ = G[n_fit:]  # 連續尾段（out-of-sample null；L1/L2 共用）
+                self._fwer_block_cal_ = self._fwer_cal_
+                self._fwer_dqi_ = DQIxGate(self.config).fit(gfit)
+                self._fwer_mspc_ = MSPCModel(self.config).fit(gfit)
+                # L4 例外（紅隊 A#4）：mmd_pvalue 本即 window-vs-window 自校準、**不需** calib split；若 fit 於
+                # 前 2/3、卻以漂移的後段評分，L4 會把 golden 自然操作點漫遊誤判為位移（實證 golden FPR 0.04→0.12）。
+                # 故 L4 維持 fit 於**全 golden**（null 涵蓋整時域），只 L1/L2 套 continuous split。
+                self._fwer_drift_ = DriftDetector(self.config).fit(G)
+                self._fwer_split_ = True
+            else:  # 太短無法連續 split → in-sample fallback + warn
+                self._fwer_cal_ = G
+                self._fwer_dqi_, self._fwer_mspc_, self._fwer_drift_ = self.dqi_, self.mspc_, self.drift_
+                self._fwer_split_ = False
+                warnings.warn(
+                    f"FWER 連續 split 停用（自相關 golden n={n} 不足）→ 退回 in-sample null，FWER 較不保守"
+                    "（AC-6 不保證 ≤α，自相關下實證可達 0.44）。請增大 golden。",
+                    RuntimeWarning, stacklevel=2,
+                )
         else:
-            self._fwer_cal_ = G
-            self._fwer_dqi_, self._fwer_mspc_, self._fwer_drift_ = self.dqi_, self.mspc_, self.drift_
-            self._fwer_split_ = False
-            warnings.warn(  # Rule 12 fail loud：退回 in-sample 校準時 FWER 較不保守，須讓呼叫端知道
-                f"FWER split 校準停用（golden n={n} 不足 3·min_samples_per_dim）→ 退回 in-sample null，"
-                "golden 誤報率控制較不保守（AC-6 不保證 ≤α）。請增大 golden 或降維。",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+            # iid（synthetic）→ 原 shuffle split + permutation（統計等價，向後相容）
+            ncal = n // 3
+            if ncal >= mind and (n - ncal) >= 2 * mind:
+                perm = np.random.default_rng(self.config.random_state).permutation(n)
+                self._fwer_cal_ = G[perm[:ncal]]
+                gfit = G[perm[ncal:]]
+                self._fwer_dqi_ = DQIxGate(self.config).fit(gfit)
+                self._fwer_mspc_ = MSPCModel(self.config).fit(gfit)
+                self._fwer_drift_ = DriftDetector(self.config).fit(G)
+                self._fwer_split_ = True
+            else:
+                self._fwer_cal_ = G
+                self._fwer_dqi_, self._fwer_mspc_, self._fwer_drift_ = self.dqi_, self.mspc_, self.drift_
+                self._fwer_split_ = False
+                warnings.warn(
+                    f"FWER split 校準停用（golden n={n} 不足 3·min_samples_per_dim）→ 退回 in-sample null，"
+                    "golden 誤報率控制較不保守（AC-6 不保證 ≤α）。請增大 golden 或降維。",
+                    RuntimeWarning, stacklevel=2,
+                )
         self._fwer_ready_ = True
 
     def _severity_health(self, stat: np.ndarray, mu: float, sig: float) -> float:
@@ -188,12 +211,15 @@ class HealthIndex:
         各層用 permutation 兩樣本，使 p-value 在 golden null 下近似 uniform（不受 in-sample 控制限低估
         之累，紅隊 N6）：
         - **L1**：離域指標比例（golden_calib vs X；離散低計數，此 synthetic 下近乎無功效＝恆保守）。
-        - **L2**：每樣本 **SPE 均值**——雙路（block-aware，消自相關 in-sample 過度拒絕）：iid（block_len_=1）
-          用 ``_perm_two_sample``（golden_calib vs X）；自相關（連續 TEP）改 ``_block_window_pvalue``
-          window-vs-window（null=golden 連續窗 SPE 均值，自校準）。實測 in-sample FP@.05 由 0.22 回落
-          ≈0.058（名目）、drift 仍抓。隱性飄移主訊號。
-        - **L4**：``DriftDetector.mmd_pvalue``（②後改 window-vs-window block-bootstrap；fit 於**保序全 golden**，
-          本即自校準 p-value，為三層中**唯一未用 calib split**者。紅隊實測 L4 golden 誤報率 0.000，含 in-sample）。
+        - **L2**：每樣本 **SPE 均值**——雙路：iid（block_len_=1）用 ``_perm_two_sample``（golden_calib vs X）；
+          自相關（連續 TEP）改 ``_block_window_pvalue``，**P2 後 null 取 out-of-sample 連續尾段**
+          （``_fwer_block_cal_``，非 in-sample 全 golden）——修正 in-sample 樂觀（紅隊實證 tep_tp hold-out
+          golden L2 FPR 0.44→0.04）。隱性飄移主訊號。誠實標：弱 drift 在**短窗（如 60）out-of-sample 下
+          window-level recall 可能掉到 ~0**（需足夠樣本/full-segment 才有功效，紅隊）；融合 HI 對此惰性。
+        - **L4**：``DriftDetector.mmd_pvalue``（window-vs-window block-bootstrap；fit 於**全 golden**，本即
+          自校準、不套 calib split——P2 刻意不對 L4 split，否則對非平穩後段誤報）。誠實標（紅隊修正）：
+          舊註「golden FPR 0.000」僅在 **in-sample/平穩** golden 成立；**非平穩 golden 的 hold-out 下 L4 可達
+          ~0.08**（操作點漫遊被視為位移）——此為 golden 品質訊號（acceptance 會 surface），非校準 bug。
 
         Returns: {"L1","L2","L4"} → p∈(0,1]。
         """
@@ -207,8 +233,11 @@ class HealthIndex:
         p1 = self._perm_two_sample(out_c, out_x)
         # L2：每樣本 SPE 均值（連續統計量；隱性飄移主訊號）
         spe_x = self._fwer_mspc_.spe(X)
-        if self._fwer_l2_block_:  # 自相關：window-vs-window 區塊化 null（消 in-sample 過度拒絕）
-            spe_g = self._fwer_mspc_.spe(self._golden_)  # 保序 golden 逐樣本 SPE
+        if self._fwer_l2_block_:  # 自相關：window-vs-window 區塊化 null
+            # P2：null 取**out-of-sample 連續尾段**（_fwer_block_cal_）的逐樣本 SPE，非 in-sample 全 golden。
+            # 連續段保自相關（block-bootstrap 前提）且 disjoint 於 mspc fit 的前段（消 in-sample 樂觀 0.44）。
+            cal_series = self._fwer_block_cal_ if self._fwer_block_cal_ is not None else self._golden_
+            spe_g = self._fwer_mspc_.spe(cal_series)
             p2 = self._block_window_pvalue(spe_g, float(np.mean(spe_x)), len(X))
         else:                     # iid：原 permutation 兩樣本（向後相容）
             p2 = self._perm_two_sample(self._fwer_mspc_.spe(cal), spe_x)
