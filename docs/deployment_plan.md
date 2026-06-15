@@ -60,13 +60,13 @@ src/health_index/deploy/
 
 ## 6. 執行順序（瓶子優先；每桶 worktree→TDD→≥2 紅隊(承載性)→綠燈 commit→merge→devlog）
 
-**Phase 1 — 瓶子（demo 關鍵路徑，先做）**
-- [x] 桶0：golden='auto'（最早乾淨平穩段，紅隊驗 20/20 不選 drift）— 收尾 merge
-- [ ] G1：bundle save/load + 指紋重放
-- [ ] G2a：sources(Replay/FileDrop) + runner poll_once + persistence_k
-- [ ] G2b：alarms 雙視圖 + sinks
-- [ ] UI：4 步 demo（選範圍→建模→確認模擬→看健康指標）
-- [ ] 端到端整合：公開資料集跑通 demo
+**Phase 1 — 瓶子（demo 關鍵路徑，先做）✅ DEMO-READY 2026-06-15**
+- [x] 桶0：golden='auto'（最早乾淨平穩段，紅隊驗 20/20 不選 drift）— merge aca5f0a
+- [x] G1：bundle save/load + 指紋重放 — 394b883（7 測試）
+- [x] G2a：sources(FrameSource/Replay) + runner poll_once + persistence_k — e1ff4d4（8 測試，resume-safe）
+- [x] UI：4 步 demo orchestration（demo.py）+ Dash 殼（demo_app.py，HTTP 200 跑通）— 6 測試
+- [x] 端到端整合：公開資料集跑通 demo（golden 健康/換產品+殘留飄移告警/乾淨回歸不誤報）
+- [~] G2b：alarms 雙視圖 + sinks — demo 暫用 runner 內建 raw/persisted_alarm；雙視圖渲染列 Phase 2
 
 **Phase 2 — 新酒（正確性，後換）**
 - [ ] P1：融合層子分數改不飽和嚴重度/尾機率（重用 fwer 機制）；fwer_alarm 升為權威告警；HI 重校門檻
