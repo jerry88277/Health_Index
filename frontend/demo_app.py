@@ -31,7 +31,9 @@ _REGION_ZH = {"golden": "黃金基準", "clean_reentry": "乾淨回歸", "drift"
 app = Dash(__name__, title="ProcessGuard 製程健康監控")
 app.index_string = """<!DOCTYPE html>
 <html><head>{%metas%}<meta name="viewport" content="width=device-width, initial-scale=1">{%favicon%}{%css%}
-<style>@media (max-width:640px){.pg-grid{grid-template-columns:1fr !important}}</style>
+<style>@media (max-width:640px){.pg-grid{grid-template-columns:1fr !important}}
+@keyframes pgflash{0%,100%{background:#fef2f2}50%{background:#fde0e0}}
+.pg-flash{animation:pgflash 1.2s ease-in-out infinite}</style>
 <title>{%title%}</title></head>
 <body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
 
@@ -116,6 +118,7 @@ def _home_metrics(screen, _r, _t):
     pcol = {"alarm": _BAD, "healthy": _OK, "empty": "#888"}[pv["plant_status"]]
     ptxt = {"alarm": "⚠ 有裝置告警", "healthy": "✅ 全廠健康", "empty": "尚無模型"}[pv["plant_status"]]
     banner = html.Div(f"全廠狀態：{ptxt}　·　{pv['n_assets']} 裝置／{n_alarm} 告警中",
+                      className="pg-flash" if pv["plant_status"] == "alarm" else "",  # 告警閃示（聲音替代，作業員）
                       style={"borderLeft": f"4px solid {pcol}", "background": "#f6f7f9", "padding": "10px 14px",
                              "color": pcol, "fontWeight": 500, "marginBottom": "12px"})
     tiles = html.Div(className="pg-grid", style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "12px"},
@@ -254,6 +257,13 @@ def _events_view():
             dcc.Input(id="roi-loss", type="number", value=1000000, step=100000, min=0,
                       style={"width": "160px", "marginLeft": "8px"}),
             html.Span("　元；ROI 為情境估算非實測。", style={"fontSize": "12px", "color": "#888"}),
+        ]),
+        html.Div(style={"margin": "10px 0"}, children=[
+            html.Label("篩選狀態：", style={"fontSize": "13px", "color": "#51607a"}),
+            dcc.Dropdown(id="evt-filter", value="all", clearable=False,
+                         options=[{"label": "全部", "value": "all"}, {"label": "未結 open", "value": "open"},
+                                  {"label": "處理中 ack", "value": "ack"}, {"label": "已關閉", "value": "closed"}],
+                         style={"width": "160px", "display": "inline-block", "marginLeft": "8px", "verticalAlign": "middle"}),
         ]),
         dcc.Loading(html.Div(id="events-body")),
     ]
@@ -566,13 +576,19 @@ _SEV_COL = {"critical": _BAD, "warning": "#b26a00", "info": "#51607a"}
 
 
 @app.callback(Output("events-body", "children"), Input("screen", "data"), Input("events-refresh", "data"),
-              Input("tick", "n_intervals"), Input("roi-loss", "value"))
-def _events_body(screen, _r, _t, roi_loss):
+              Input("tick", "n_intervals"), Input("roi-loss", "value"), Input("evt-filter", "value"))
+def _events_body(screen, _r, _t, roi_loss, flt):
     if screen != "events":
         return no_update
     ov = demo.event_overview(_INCIDENTS, avg_loss_per_unplanned_stop=float(roi_loss or 1_000_000))
     st, roi, incs = ov["stats"], ov["roi"], ov["incidents"]
     mttr = st["mean_mttr_hr"]
+    handover = html.Div(f"交接班摘要：未結 {st['open']}、處理中 {st['ack']}、已關閉 {st['closed']}、誤報 "
+                        f"{st.get('false_alarm', 0)}｜平均 MTTR {('—' if mttr is None else str(mttr) + ' 小時')}",
+                        style={"background": "#eef2ff", "color": _ACCENT, "padding": "8px 12px",
+                               "borderRadius": "8px", "margin": "8px 0", "fontWeight": 500})
+    if flt and flt != "all":  # 狀態篩選（現場工程師）——清單篩，KPI/ROI 仍全量
+        incs = [it for it in incs if it["status"] == flt]
     tiles = html.Div(className="pg-grid", style={"display": "grid", "gridTemplateColumns": "repeat(5,1fr)",
                      "gap": "12px", "margin": "12px 0"},
                      children=[_tile("未結 open", str(st["open"])), _tile("處理中 ack", str(st["ack"])),
@@ -615,7 +631,7 @@ def _events_body(screen, _r, _t, roi_loss):
                 html.Div(acts, style={"marginTop": "6px"}),
             ], style={"margin": "8px 0"}))
         body = html.Div(cards)
-    return html.Div([tiles, roi_card, body])
+    return html.Div([handover, tiles, roi_card, body])
 
 
 @app.callback(Output("events-refresh", "data"),
