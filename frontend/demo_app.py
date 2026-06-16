@@ -16,7 +16,7 @@ import os
 import tempfile
 
 import plotly.graph_objects as go
-from dash import Dash, Input, Output, State, ctx, dcc, html, no_update
+from dash import ALL, Dash, Input, Output, State, ctx, dcc, html, no_update
 
 from health_index.deploy import demo
 
@@ -102,14 +102,24 @@ def _home_metrics(screen):
         cards = []
         for r in ov:
             txt, col = _STATUS.get(r["status"], _STATUS["unknown"])
+            openable = r["status"] in ("healthy", "alarm")  # 可評分才可點進結果
             hp = f"健康度 {r['health']}" if r["health"] is not None else "（需該資料源才能評分）"
-            cards.append(_card([
+            children = [
                 html.Div(r["product"], style={"fontWeight": 500}),
                 html.Div(txt, style={"color": col, "fontSize": "14px", "margin": "4px 0"}),
                 html.Div(hp, style={"color": "#51607a", "fontSize": "12px"}),
-            ], style={"display": "inline-block", "width": "190px", "marginRight": "10px", "verticalAlign": "top",
-                      "borderColor": col if r["status"] == "alarm" else "#e3e8ef"}))
-        body = html.Div([html.Div("已建立模型（當前健康）", style={"fontWeight": 500, "margin": "8px 0"}), html.Div(cards)])
+                html.Div("點此查看 →" if openable else "—",
+                         style={"color": _ACCENT if openable else "#bbb", "fontSize": "12px", "marginTop": "6px"}),
+            ]
+            style = {"display": "inline-block", "width": "190px", "marginRight": "10px", "verticalAlign": "top",
+                     "border": f"1px solid {col if r['status'] == 'alarm' else '#e3e8ef'}",
+                     "borderRadius": "12px", "padding": "16px 18px", "background": "#fff",
+                     "cursor": "pointer" if openable else "default"}
+            cards.append(html.Div(children, id={"type": "open-model", "product": r["product"]},
+                                  n_clicks=0, style=style) if openable
+                         else html.Div(children, style=style))
+        body = html.Div([html.Div("已建立模型（當前健康）— 點卡片查看結果", style={"fontWeight": 500, "margin": "8px 0"}),
+                         html.Div(cards)])
     else:
         body = html.Div("尚無模型。點右上「＋ 新建監控模型」開始，選一段正常時期當基準。",
                         style={"color": "#51607a", "background": "#f6f7f9", "padding": "14px", "borderRadius": "10px"})
@@ -204,6 +214,17 @@ app.layout.children[-1].children = _results_view()
 def _route(*_):
     t = ctx.triggered_id
     return {"nav-home": "home", "btn-results-home": "home", "btn-new": "wizard", "go-results": "results"}.get(t, no_update)
+
+
+@app.callback(Output("bundle-store", "data", allow_duplicate=True), Output("screen", "data", allow_duplicate=True),
+              Input({"type": "open-model", "product": ALL}, "n_clicks"), prevent_initial_call=True)
+def _open_model(clicks):
+    """點總覽模型卡 → 載入該模型 bundle + 進結果頁（解決『只能看燈、不能查看模型』）。"""
+    t = ctx.triggered_id
+    if not t or not clicks or not any(c for c in clicks if c):
+        return no_update, no_update
+    product = t["product"]
+    return {"bundle_path": os.path.join(_MODELS_DIR, f"{product}.joblib"), "product": product}, "results"
 
 
 @app.callback(Output("wstep", "data"),
@@ -313,6 +334,7 @@ def _run(screen, bundle, name, window):
         return no_update, no_update, no_update
     if not bundle:
         return html.Span("⚠ 請先建立模型", style={"color": "#ef6c00"}), go.Figure(), go.Figure()
+    name = bundle.get("product") or name  # 從總覽開啟既有模型時，資料源＝該模型 product（非 dropdown）
     try:
         tl = demo.score_timeline(bundle["bundle_path"], name, window=int(window or 60))
     except Exception as e:
@@ -371,6 +393,7 @@ def _run(screen, bundle, name, window):
 def _detail(click, bundle, name, window):
     if not bundle or not click:
         return ""
+    name = bundle.get("product") or name  # 與 _run 一致：資料源＝模型 product
     pt = click["points"][0]
     w = int(window or 60)
     cd = pt.get("customdata")  # 末位為窗 start（x 軸已改 wall-clock，不能用 x 反推）
