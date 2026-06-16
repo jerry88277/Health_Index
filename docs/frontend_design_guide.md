@@ -102,3 +102,30 @@
 - P1 現場工程師：位號(tag)對照 config 層（RBC/下鑽顯位號）+ historian deep-link；close-note 綁每卡 + close-reason(誤報，排除 MTTR/ROI)；告警清單篩選/排序；事件→該窗下鑽。
 - P1 製程工程師：門檻/persistence slider；測試段圈選 + 選定區間密集評分；golden 多段；生命週期面板(lifecycle 後端已備)。
 - P2 處長：廠→區→裝置階層(config)；手機 responsive；PDF 月報；ROI 損失可輸入 + 試點實測回填。
+
+---
+
+## 7. 增量 6 最終多角色複審 + loop 終止（2026-06-17）
+
+經 7 輪自動優化（P0-a 治理/告警/問責、P0-b 誤報/ROI/手機、位號、門檻 slider、role-view、閃示/交接班/篩選、廠區階層）+ 複審揪出的 3 真 bug 修正，4 角色最終裁決：
+
+| 角色 | 最終裁決 | 剩餘 blocker（性質）|
+|---|---|---|
+| 現場作業員 | 可試點（白班陪跑）| 真聲音告警通道（外部 alerting）、手機實機點擊驗證 |
+| 現場工程師 | 可試點（上線接 historian）| historian/PI 趨勢 deep-link（外部，需客戶 DCS）|
+| 生產製程工程師 | 可試點（非正式上線）| 測試段圈選、生命週期 UI 接線（demo 可補）；驗收對實際 golden（demo 可補）；真 confirmed-normal 資料（外部）|
+| 生產處長 | **可採購試點** | 真 SSO/RBAC、PDF 月報（外部/導入期 IT 整合）|
+
+### 已修 demo 真 bug（0012c8c）
+- 驗收 window 對齊使用者選值（原寫死 60 脫鉤）+ 明示「採標準 hold-out，上線應對實際 golden 驗收」。
+- _run 自動開案/SOP 套 tag_map（事件肇因顯 DCS 位號，非 xmeas07）。
+- 作業員視圖去術語洩漏（verdict reason 改白話 op_reason，不複用工程師字串）。
+
+### loop 終止理由（Rule 12 誠實）
+4 角色一致達「可採購試點」；絕對「可上線」的剩餘項本質需客戶現場環境（SSO/historian/聲音通道/PDF/真實 confirmed-normal
+資料）——**公開資料 demo 無法滿足**。續跑 5 分鐘 loop 無法推進外部項，故停止 cron（CronDelete 8e6c72d2）。
+
+### 可選後續（demo 仍可補，非試點 blocker）
+- 測試段 RangeSlider + 選定區間密集評分；生命週期面板接 lifecycle.py；驗收對使用者實際 golden 驗收。
+- 事件卡→該窗結果 deep-link；門檻 slider「套用此門檻」寫回 bundle；前端 _event_action 署名 callback 測試。
+- 正式上線（pilot 後）：接企業 SSO/RBAC、historian 趨勢 deep-link、真聲音告警、PDF 月報。
