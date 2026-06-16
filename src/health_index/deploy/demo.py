@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import glob
+import json
 import os
 import warnings
 
@@ -213,6 +214,20 @@ def score_timeline(
     }
 
 
+def tag_map_for(models_dir: str, product: str) -> dict:
+    """讀 ``{models_dir}/tags/{product}.json``（x_column → 現場 DCS 位號）；無則回 {}（識別映射）。
+
+    現場位號為客戶 DCS/historian 專有 → 以可放置的 config 檔承載（NOT VERIFIED stub），讓 RBC 肇因能顯示
+    工程師認得的位號（如 xmeas07 → TIC-205）而非資料集內部欄名（紅隊現場工程師「最後一哩」）。
+    """
+    p = os.path.join(models_dir, "tags", f"{product}.json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
 def window_detail(
     bundle_path: str,
     name: str,
@@ -220,6 +235,7 @@ def window_detail(
     end: int,
     *,
     compute_fwer: bool = True,
+    tag_map: dict | None = None,
     **build_kwargs,
 ) -> dict:
     """單一窗的**詳細 AVM 指標**（點選時間線某窗時的下鑽，C1）：GSI/T²/SPE 原始值與控制限、RBC 肇因
@@ -263,6 +279,9 @@ def window_detail(
         fwer=fwer,
     )
     detail = build_alarm_event(bundle, score, X).engineer_view()  # layers + rbc_ranking + model_version
+    tm = tag_map or {}  # 位號對照：RBC 肇因欄名 → 現場 DCS 位號（無 config 則維持欄名）
+    detail["rbc_ranking"] = [[tm.get(v, v), s] for v, s in detail["rbc_ranking"]]
+    detail["tag_mapped"] = bool(tm)
     detail["alarm"] = score.raw_alarm
     detail["is_alarm"] = bool(hi.is_alarm(X))
     detail["subscores"] = {k: round(v, 4) for k, v in score.subscores.items()}

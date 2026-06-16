@@ -473,7 +473,8 @@ def _detail(click, bundle, name, window):
         start = int(pt.get("pointNumber", pt.get("pointIndex", 0))) * w
     end = start + w
     try:
-        d = demo.window_detail(bundle["bundle_path"], name, start, end, compute_fwer=True)
+        d = demo.window_detail(bundle["bundle_path"], name, start, end, compute_fwer=True,
+                               tag_map=demo.tag_map_for(_MODELS_DIR, name))
     except Exception as e:
         return html.Span(f"❌ 詳細指標載入失敗：{e}", style={"color": _BAD})
     mspc, pv = d["mspc"], (d["fwer_pvalues"] or {})
@@ -482,6 +483,7 @@ def _detail(click, bundle, name, window):
                      html.Td(d["layers"][k]["action"], style={"color": "#51607a", "fontSize": "12px"})])
             for k in ("L1", "L2", "L4")]
     rbc_top = "、".join(f"{v}({s})" for v, s in d["rbc_ranking"][:5])
+    rbc_note = "" if d.get("tag_mapped") else "（顯資料集欄名；現場 DCS 位號對照放 tags/{產品}.json 即自動套用）"
     ss = d.get("soft_sensor", {})
     if not ss.get("available"):
         ss_line = "軟測量（Ŷ / 可信度）：此模型無 Y 標的（未提供軟量測）。"
@@ -511,7 +513,8 @@ def _detail(click, bundle, name, window):
                  style={"marginBottom": "8px"}),
         html.Table([html.Thead(html.Tr([html.Th(h) for h in ("層", "代號", "狀態", "p-value", "建議檢查")]))]
                    + [html.Tbody(rows)], style={"width": "100%", "fontSize": "13px", "borderCollapse": "collapse"}),
-        html.Div(f"RBC 肇因排行 (top5)：{rbc_top}", style={"marginTop": "8px"}),
+        html.Div([html.Span(f"RBC 肇因排行 (top5)：{rbc_top}"),
+                  html.Span(rbc_note, style={"color": "#888", "fontSize": "12px"})], style={"marginTop": "8px"}),
         html.Div(ss_line, style={"marginTop": "6px", "color": _CONF}),
         html.Div(f"模型版本：{d['model_version']}", style={"color": "#888", "fontSize": "12px", "marginTop": "4px"}),
     ])

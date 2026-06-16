@@ -201,6 +201,28 @@ def test_score_timeline_subsamples_when_capped(tmp_path):
     assert all("ts" in p and "start" in p for p in tl["points"])
 
 
+def test_tag_map_for_reads_config(tmp_path):
+    """位號對照 config：讀 tags/{product}.json；無檔回 {}（識別映射）。"""
+    import json as _json
+    import os as _os
+
+    _os.makedirs(str(tmp_path / "tags"))
+    _json.dump({"x1": "FI-101"}, open(str(tmp_path / "tags" / "synthetic.json"), "w", encoding="utf-8"))
+    assert demo.tag_map_for(str(tmp_path), "synthetic") == {"x1": "FI-101"}
+    assert demo.tag_map_for(str(tmp_path), "nope") == {}
+
+
+def test_window_detail_tag_map_remaps_rbc(tmp_path):
+    """位號對照：tag_map 把 RBC 肇因欄名 → 現場 DCS 位號（現場工程師最後一哩）。無 config 維持欄名。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    d0 = demo.window_detail(m["bundle_path"], "synthetic", 0, 60, compute_fwer=False, seed=5, drift_strength=1.2)
+    assert d0["tag_mapped"] is False
+    top0 = d0["rbc_ranking"][0][0]
+    d1 = demo.window_detail(m["bundle_path"], "synthetic", 0, 60, compute_fwer=False, tag_map={top0: "TIC-205"},
+                            seed=5, drift_strength=1.2)
+    assert d1["tag_mapped"] is True and d1["rbc_ranking"][0][0] == "TIC-205"
+
+
 def test_score_timeline_rejects_corrupt_bundle(tmp_path):
     """WHY：步驟4 載入 bundle 走 verify——指紋不符（版本漂移/損毀）拒載，不靜默用壞模型評分。"""
     m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5)
