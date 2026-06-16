@@ -72,7 +72,12 @@ app.layout = html.Div(
                                "padding": "2px 8px", "marginRight": "8px", "fontWeight": 500}), "ProcessGuard ",
                                html.Span("製程健康監控", style={"color": "#51607a", "fontSize": "14px"})],
                               style={"fontWeight": 500, "fontSize": "17px"}),
-                     html.Div([_btn("事件", "nav-events", style={"marginRight": "8px"}), _btn("總覽", "nav-home")]),
+                     html.Div([
+                         dcc.RadioItems(id="role-sel", value="engineer", inline=True,
+                                        options=[{"label": " 作業員", "value": "operator"},
+                                                 {"label": " 工程師", "value": "engineer"}],
+                                        style={"display": "inline-block", "marginRight": "12px", "fontSize": "13px"}),
+                         _btn("事件", "nav-events", style={"marginRight": "8px"}), _btn("總覽", "nav-home")]),
                  ]),
         html.Div(id="scr-home"),
         html.Div(id="scr-wizard", style={"display": "none"}),
@@ -481,10 +486,10 @@ def _recolor(thr, pts):
     return _timeline_fig(pts, thr), f"門檻 {thr} 試算：{n}/{len(pts)} 窗低於門檻（what-if，不改模型實際告警）"
 
 
-@app.callback(Output("window-detail", "children"), Input("timeline", "clickData"),
+@app.callback(Output("window-detail", "children"), Input("timeline", "clickData"), Input("role-sel", "value"),
               State("bundle-store", "data"), State("dataset", "value"), State("window", "value"),
               prevent_initial_call=True)
-def _detail(click, bundle, name, window):
+def _detail(click, role, bundle, name, window):
     if not bundle or not click:
         return ""
     name = bundle.get("product") or name  # 與 _run 一致：資料源＝模型 product
@@ -523,6 +528,19 @@ def _detail(click, bundle, name, window):
     top_var = d["rbc_ranking"][0][0] if d.get("rbc_ranking") else "(待查)"
     sop = (f"建議動作：現場確認「{top_var}」相關設備，必要時依 SOP 通報工程師（分機填於 SOP）。"
            if d["alarm"] else "建議動作：維持監看，無需處置。")  # 一行白話 SOP（作業員）
+    if role == "operator":  # 作業員視圖：只給紅綠/可信/源頭/動作，藏 GSI/T²/SPE/p-value/Ŷ 等術語（漸進揭露）
+        return _card([
+            html.H5(f"窗 [{start}:{end}]　{'⚠ 異常' if d['alarm'] else '✅ 正常'}", style={"margin": "0 0 8px"}),
+            html.Div([html.Span(v.get("label", ""), style={"fontWeight": 500, "fontSize": "16px"}),
+                      html.Div("　" + v.get("reason", ""), style={"marginTop": "2px"}),
+                      html.Div(sop, style={"marginTop": "6px", "fontWeight": 500})],
+                     style={"background": "#f6f7f9", "borderLeft": f"5px solid {vcol}", "padding": "10px 14px",
+                            "color": vcol, "marginBottom": "8px"}),
+            html.Div(f"可信度 {d['confidence']}（高＝此警報可信，低＝先觀察）", style={"marginBottom": "4px"}),
+            html.Div(f"最可能源頭：{top_var}", style={"fontWeight": 500}),
+            html.Div("（切換右上「工程師」可看完整統計指標與肇因排行）",
+                     style={"color": "#888", "fontSize": "12px", "marginTop": "6px"}),
+        ])
     return _card([
         html.H5(f"窗 [{start}:{end}] 詳細指標　{'⚠ 告警' if d['alarm'] else '✅ 正常'}", style={"margin": "0 0 8px"}),
         html.Div([html.Span(v.get("label", ""), style={"fontWeight": 500}), html.Span("　" + v.get("reason", "")),
