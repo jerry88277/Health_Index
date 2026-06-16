@@ -58,6 +58,7 @@ app.layout = html.Div(
         dcc.Store(id="bundle-store"),
         dcc.Store(id="nrows", data=1500),
         dcc.Store(id="events-refresh", data=0),
+        dcc.Interval(id="tick", interval=60000, n_intervals=0),  # 自動刷新（60s）——盤面不需手動戳
         html.Div(style={"display": "flex", "alignItems": "center", "justifyContent": "space-between",
                         "borderBottom": "1px solid #e3e8ef", "paddingBottom": "12px", "marginBottom": "16px"},
                  children=[
@@ -94,8 +95,9 @@ _STATUS = {"healthy": ("● 健康", _OK), "alarm": ("● 告警", _BAD), "data_
            "unknown": ("○ 未知", "#888")}
 
 
-@app.callback(Output("home-metrics", "children"), Input("screen", "data"), Input("events-refresh", "data"))
-def _home_metrics(screen, _r):
+@app.callback(Output("home-metrics", "children"), Input("screen", "data"), Input("events-refresh", "data"),
+              Input("tick", "n_intervals"))
+def _home_metrics(screen, _r, _t):
     pv = demo.plant_overview(_MODELS_DIR, incidents_path=_INCIDENTS)  # 全廠視圖 + 各裝置未結事件
     ov = pv["assets"]
     n_alarm = pv["n_alarm"]
@@ -225,10 +227,10 @@ def _events_view():
                       _btn("← 回總覽", "btn-events-home")]),
         ]),
         html.Div(style={"margin": "10px 0"}, children=[
-            html.Label("關閉時的處置記錄：", style={"fontSize": "13px", "color": "#51607a"}),
-            dcc.Input(id="close-note", type="text", placeholder="例：調 FV-101 開度後恢復",
-                      style={"width": "360px", "marginLeft": "8px"}),
-            html.Span("（先填此欄，再按某事件的「關閉」）", style={"fontSize": "12px", "color": "#888", "marginLeft": "8px"}),
+            html.Label("操作者（記入稽核軌跡）：", style={"fontSize": "13px", "color": "#51607a"}),
+            dcc.Input(id="event-actor", type="text", placeholder="姓名 / 工號",
+                      style={"width": "200px", "marginLeft": "8px"}),
+            html.Span("　處置記錄填在各事件卡上再按「關閉」。", style={"fontSize": "12px", "color": "#888"}),
         ]),
         dcc.Loading(html.Div(id="events-body")),
     ]
@@ -336,15 +338,23 @@ def _golden_readout(v):
               prevent_initial_call=True)
 def _build(_n, name, grange):
     try:
+        # 先驗收（gate）：FAIL → 不存檔（不落地），修複審揪出的「先 save 後驗收、FAIL 仍落地」治理漏洞。
+        acc = demo.acceptance_summary(name, window=60)
+        recall_txt = (f"、事故 recall {acc['drift_recall']}" if acc.get("drift_recall") is not None else "")
+        if acc.get("available") and not acc["passed"]:
+            return no_update, html.Div([
+                html.Div("⛔ 驗收未過，未存檔：" + acc["verdict"], style={"color": _BAD, "fontWeight": 500}),
+                html.Div(f"hold-out golden 誤報率 {acc['holdout_golden_fpr']}"
+                         f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{recall_txt}",
+                         style={"fontSize": "13px", "color": "#51607a"}),
+                html.Div("請改選更平穩的黃金期、或檢查資料源後重建（不合格模型不予上線）。",
+                         style={"fontSize": "13px", "color": "#51607a"}),
+            ])
         m = demo.build_and_save_model(name, golden=tuple(grange), models_dir=_MODELS_DIR,
                                       created_at=_dt.datetime.now().isoformat())
-        acc = demo.acceptance_summary(name, window=60)  # 真驗收（取代寫死「可上線」）
         if acc.get("available"):
-            ok = acc["passed"]
-            recall_txt = f"、事故 recall {acc['drift_recall']}" if acc["drift_recall"] is not None else ""
             acc_line = html.Div([
-                html.Div(("✅ 驗收通過：" if ok else "⛔ 驗收未過：") + acc["verdict"],
-                         style={"color": _OK if ok else _BAD, "fontWeight": 500}),
+                html.Div("✅ 驗收通過：" + acc["verdict"], style={"color": _OK, "fontWeight": 500}),
                 html.Div(f"hold-out golden 誤報率 {acc['holdout_golden_fpr']}"
                          f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{recall_txt}",
                          style={"fontSize": "13px", "color": "#51607a"}),
@@ -475,9 +485,13 @@ def _detail(click, bundle, name, window):
         ss_line = "軟測量：本窗尚無 Y 到達（延遲量測）——待 Y 落地後給 Ŷ 與 X→Y 可信度。"
     v = d.get("verdict", {})
     vcol = {"ok": _OK, "warn": "#b26a00", "bad": _BAD}.get(v.get("tone"), "#51607a")
+    top_var = d["rbc_ranking"][0][0] if d.get("rbc_ranking") else "(待查)"
+    sop = (f"建議動作：現場確認「{top_var}」相關設備，必要時依 SOP 通報工程師（分機填於 SOP）。"
+           if d["alarm"] else "建議動作：維持監看，無需處置。")  # 一行白話 SOP（作業員）
     return _card([
         html.H5(f"窗 [{start}:{end}] 詳細指標　{'⚠ 告警' if d['alarm'] else '✅ 正常'}", style={"margin": "0 0 8px"}),
-        html.Div([html.Span(v.get("label", ""), style={"fontWeight": 500}), html.Span("　" + v.get("reason", ""))],
+        html.Div([html.Span(v.get("label", ""), style={"fontWeight": 500}), html.Span("　" + v.get("reason", "")),
+                  html.Div(sop, style={"marginTop": "4px"})],
                  style={"background": "#f6f7f9", "borderLeft": f"4px solid {vcol}", "padding": "8px 12px",
                         "color": vcol, "marginBottom": "8px"}),
         html.Div(f"健康度 {d['subscores']}　|　可信度 {d['confidence']}"
@@ -497,8 +511,9 @@ def _detail(click, bundle, name, window):
 _SEV_COL = {"critical": _BAD, "warning": "#b26a00", "info": "#51607a"}
 
 
-@app.callback(Output("events-body", "children"), Input("screen", "data"), Input("events-refresh", "data"))
-def _events_body(screen, _r):
+@app.callback(Output("events-body", "children"), Input("screen", "data"), Input("events-refresh", "data"),
+              Input("tick", "n_intervals"))
+def _events_body(screen, _r, _t):
     if screen != "events":
         return no_update
     ov = demo.event_overview(_INCIDENTS)
@@ -526,6 +541,8 @@ def _events_body(screen, _r):
             if it["status"] == "open":
                 acts.append(_btn("認領 ACK", {"type": "ack-inc", "id": it["id"]}, style={"marginRight": "8px", "padding": "5px 12px"}))
             if it["status"] in ("open", "ack"):
+                acts.append(dcc.Input(id={"type": "note-inc", "id": it["id"]}, type="text", placeholder="本案處置記錄",
+                                      style={"width": "240px", "marginRight": "8px"}))
                 acts.append(_btn("關閉", {"type": "close-inc", "id": it["id"]}, primary=True, style={"padding": "5px 12px"}))
             mttr_line = f"MTTR {it['mttr_sec'] / 3600:.2f} 小時｜處置：{it.get('close_note')}" if it.get("mttr_sec") else ""
             cards.append(_card([
@@ -543,19 +560,26 @@ def _events_body(screen, _r):
 
 @app.callback(Output("events-refresh", "data"),
               Input({"type": "ack-inc", "id": ALL}, "n_clicks"), Input({"type": "close-inc", "id": ALL}, "n_clicks"),
-              State("close-note", "value"), State("events-refresh", "data"), prevent_initial_call=True)
-def _event_action(_a, _c, note, refresh):
+              State({"type": "note-inc", "id": ALL}, "value"), State("event-actor", "value"),
+              State("events-refresh", "data"), prevent_initial_call=True)
+def _event_action(_a, _c, _notes, actor, refresh):
     if not ctx.triggered or not ctx.triggered[0].get("value"):
         return no_update
     t = ctx.triggered_id
     if not isinstance(t, dict):
         return no_update
+    actor = (actor or "").strip() or "未具名"  # 記入稽核軌跡（取代寫死「工程師」；真 auth 為 P2）
     store = IncidentStore(_INCIDENTS)
     try:
         if t["type"] == "ack-inc":
-            store.ack(t["id"], by="工程師")
+            store.ack(t["id"], by=actor)
         else:
-            store.close(t["id"], note=note or "已處置", by="工程師")
+            note = ""  # 取「本案卡片」的處置記錄（依 id 對應，不再共用單一框 → 不會貼錯案）
+            for st in ctx.states_list[0]:
+                if isinstance(st.get("id"), dict) and st["id"].get("id") == t["id"]:
+                    note = st.get("value") or ""
+                    break
+            store.close(t["id"], note=note or "已處置", by=actor)
     except Exception:
         return no_update
     return (refresh or 0) + 1
