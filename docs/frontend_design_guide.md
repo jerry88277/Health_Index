@@ -75,3 +75,30 @@
 - **P1（roadmap）**：告警清單表（點 row 進下鑽）、門檻/persistence_k slider、生命週期面板（currency/重建）、匯出 CSV/PDF、ACK/消音/處置留痕、聲音告警、位號(tag)對照 + DCS/historian 趨勢連結。
 - **P2（需使用者拍板的產品層，新後端基礎建設）**：全廠 廠→區→裝置→產品 階層視圖、事件閉環+MTTR、ROI 效益看板、權限分層+稽核 log、手機 responsive。
 > Rule 7 範圍誠實標：P2 是新產品層級（數週工程），非一次 UI 優化能補；建議單一裝置付費試點先行（處長語）。
+
+---
+
+## 6. 增量 5 多角色複審（2026-06-16）
+
+4 角色子代理複審增量 5（事件閉環/ACK/MTTR/ROI/全廠總燈/可點卡/wall-clock/可信判定）。
+
+一致肯定：事件閉環+MTTR+防重複、「可信/存疑」判定橫幅、驗收真接上、ROI 誠實標、CSV 匯出。
+
+### 3 核心問題（design-advisor 收斂）
+1. **治理層 correctness（P0）**：驗收 FAIL 未物理擋存檔（demo.py 先 save 後 acceptance）；事件署名寫死 `by="工程師"` 無問責（處長合規 gating）；同名模型靜默覆蓋。
+2. **監控盤不主動告警（P0，作業員）**：無 dcc.Interval 自動刷新 + 無聲音 → 不戳不亮，三班現場不可用。
+3. **最後一哩定位斷裂（P1，現場工程師）**：RBC 顯示內部欄名（xmeas07）非 DCS 位號；無 historian 趨勢連結。
+
+### 真 bug（優先修）
+- 驗收 FAIL 未擋存檔（先 save 後驗收）；共用 close-note 多案可能貼錯案；署名寫死無問責。
+
+### 角色裁決
+作業員 不能用(當班)｜現場工程師 勉強｜製程工程師 勉強｜處長 需補強(接近試點)。
+綜合：POC 紮實，尚未可現場部署；到「試點」缺口集中＝治理(auth/問責/FAIL-block) + 作業員告警(Interval+聲音) + 最後一哩(位號對照)。
+
+### 增量 6 roadmap（依阻擋程度）
+- P0 治理：acceptance 移到 save 前（FAIL 不落地）；事件動作帶真實 actor/角色 + 稽核 log；建模 product 命名 + 覆蓋確認。
+- P0 作業員：dcc.Interval 自動刷新 + 聲音告警 + 告警卡一行白話 SOP 動作 + 交接班摘要。
+- P1 現場工程師：位號(tag)對照 config 層（RBC/下鑽顯位號）+ historian deep-link；close-note 綁每卡 + close-reason(誤報，排除 MTTR/ROI)；告警清單篩選/排序；事件→該窗下鑽。
+- P1 製程工程師：門檻/persistence slider；測試段圈選 + 選定區間密集評分；golden 多段；生命週期面板(lifecycle 後端已備)。
+- P2 處長：廠→區→裝置階層(config)；手機 responsive；PDF 月報；ROI 損失可輸入 + 試點實測回填。
