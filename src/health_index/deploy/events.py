@@ -35,6 +35,7 @@ class Incident:
     ack_at: str | None = None
     closed_at: str | None = None
     close_note: str | None = None
+    close_reason: str | None = None  # real（真實處置）/ false_alarm（誤報）/ ignore（已知狀況忽略）
     mttr_sec: float | None = None  # 關閉時 = closed_at − detected_at（秒）
 
 
@@ -107,8 +108,8 @@ class IncidentStore:
         """現場工程師認領（接手處理中）。"""
         return self._update(incident_id, status=ACK, ack_by=str(by), ack_at=_iso(at))
 
-    def close(self, incident_id: str, *, note: str, by: str, at: str | None = None) -> Incident:
-        """關閉並留處置記錄；計算 MTTR（closed − detected）。"""
+    def close(self, incident_id: str, *, note: str, by: str, at: str | None = None, reason: str = "real") -> Incident:
+        """關閉並留處置記錄；計算 MTTR（closed − detected）。reason∈{real,false_alarm,ignore}（誤報不計入 MTTR/ROI）。"""
         items = self._load()
         rec = next((it for it in items if it["id"] == incident_id), None)
         if rec is None:
@@ -116,7 +117,7 @@ class IncidentStore:
         closed_at = _iso(at)
         mttr = (datetime.fromisoformat(closed_at) - datetime.fromisoformat(rec["detected_at"])).total_seconds()
         return self._update(incident_id, status=CLOSED, closed_at=closed_at, close_note=str(note),
-                            ack_by=rec.get("ack_by") or str(by), mttr_sec=round(float(mttr), 1))
+                            close_reason=str(reason), ack_by=rec.get("ack_by") or str(by), mttr_sec=round(float(mttr), 1))
 
     def list(self, *, status: str | None = None, product: str | None = None) -> list[dict]:
         """列出事件（可依 status/product 過濾），偵測時間新→舊。"""
@@ -131,13 +132,15 @@ class IncidentStore:
         """處長 KPI：各狀態計數 + 平均 MTTR（秒/小時，僅 closed）。"""
         items = self._load()
         closed = [it for it in items if it["status"] == CLOSED and it.get("mttr_sec") is not None]
-        mttrs = [it["mttr_sec"] for it in closed]
+        # MTTR 只計真實處置（誤報是「快速駁回」，計入會低估真實修復時間 → 排除，紅隊現場工程師）
+        mttrs = [it["mttr_sec"] for it in closed if it.get("close_reason") != "false_alarm"]
         mean_mttr = (sum(mttrs) / len(mttrs)) if mttrs else None
         return {
             "total": len(items),
             "open": sum(1 for it in items if it["status"] == OPEN),
             "ack": sum(1 for it in items if it["status"] == ACK),
             "closed": len(closed),
+            "false_alarm": sum(1 for it in items if it.get("close_reason") == "false_alarm"),
             "active": sum(1 for it in items if it["status"] in _ACTIVE),
             "mean_mttr_sec": None if mean_mttr is None else round(mean_mttr, 1),
             "mean_mttr_hr": None if mean_mttr is None else round(mean_mttr / 3600.0, 2),

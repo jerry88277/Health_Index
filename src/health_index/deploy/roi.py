@@ -25,7 +25,8 @@ def estimate_roi(
     Returns:
         dict：n_critical / assumed_prevented_stops / est_savings + **assumptions**（透明）。
     """
-    n_critical = sum(1 for i in incidents if i.get("severity") == "critical")
+    # 排除誤報（close_reason=false_alarm）：誤報不該計入「避免的停車」效益（紅隊處長：ROI 不被誤報汙染）
+    n_critical = sum(1 for i in incidents if i.get("severity") == "critical" and i.get("close_reason") != "false_alarm")
     pf = float(max(0.0, min(1.0, prevented_fraction)))
     prevented = n_critical * pf
     savings = prevented * float(avg_loss_per_unplanned_stop)

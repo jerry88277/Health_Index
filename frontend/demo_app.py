@@ -29,6 +29,11 @@ _REGION_COLOR = {"golden": _OK, "clean_reentry": "#66bb6a", "drift": _BAD, "othe
 _REGION_ZH = {"golden": "黃金基準", "clean_reentry": "乾淨回歸", "drift": "殘留飄移", "other": "換產品/其他"}
 
 app = Dash(__name__, title="ProcessGuard 製程健康監控")
+app.index_string = """<!DOCTYPE html>
+<html><head>{%metas%}<meta name="viewport" content="width=device-width, initial-scale=1">{%favicon%}{%css%}
+<style>@media (max-width:640px){.pg-grid{grid-template-columns:1fr !important}}</style>
+<title>{%title%}</title></head>
+<body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body></html>"""
 
 
 def _card(children, style=None):
@@ -107,11 +112,9 @@ def _home_metrics(screen, _r, _t):
     banner = html.Div(f"全廠狀態：{ptxt}　·　{pv['n_assets']} 裝置／{n_alarm} 告警中",
                       style={"borderLeft": f"4px solid {pcol}", "background": "#f6f7f9", "padding": "10px 14px",
                              "color": pcol, "fontWeight": 500, "marginBottom": "12px"})
-    tiles = html.Div(style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "12px"}, children=[
-        _tile("監控中模型", str(len(ov))),
-        _tile("告警中", str(n_alarm)),
-        _tile("可監控資料源", str(len(sources))),
-    ])
+    tiles = html.Div(className="pg-grid", style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "12px"},
+                     children=[_tile("監控中模型", str(len(ov))), _tile("告警中", str(n_alarm)),
+                               _tile("可監控資料源", str(len(sources)))])
     if ov:
         cards = []
         for r in ov:
@@ -230,7 +233,13 @@ def _events_view():
             html.Label("操作者（記入稽核軌跡）：", style={"fontSize": "13px", "color": "#51607a"}),
             dcc.Input(id="event-actor", type="text", placeholder="姓名 / 工號",
                       style={"width": "200px", "marginLeft": "8px"}),
-            html.Span("　處置記錄填在各事件卡上再按「關閉」。", style={"fontSize": "12px", "color": "#888"}),
+            html.Span("　處置記錄與原因填在各事件卡上再按「關閉」。", style={"fontSize": "12px", "color": "#888"}),
+        ]),
+        html.Div(style={"margin": "10px 0"}, children=[
+            html.Label("每次非計畫停車損失（ROI 假設）：", style={"fontSize": "13px", "color": "#51607a"}),
+            dcc.Input(id="roi-loss", type="number", value=1000000, step=100000, min=0,
+                      style={"width": "160px", "marginLeft": "8px"}),
+            html.Span("　元；ROI 為情境估算非實測。", style={"fontSize": "12px", "color": "#888"}),
         ]),
         dcc.Loading(html.Div(id="events-body")),
     ]
@@ -512,16 +521,18 @@ _SEV_COL = {"critical": _BAD, "warning": "#b26a00", "info": "#51607a"}
 
 
 @app.callback(Output("events-body", "children"), Input("screen", "data"), Input("events-refresh", "data"),
-              Input("tick", "n_intervals"))
-def _events_body(screen, _r, _t):
+              Input("tick", "n_intervals"), Input("roi-loss", "value"))
+def _events_body(screen, _r, _t, roi_loss):
     if screen != "events":
         return no_update
-    ov = demo.event_overview(_INCIDENTS)
+    ov = demo.event_overview(_INCIDENTS, avg_loss_per_unplanned_stop=float(roi_loss or 1_000_000))
     st, roi, incs = ov["stats"], ov["roi"], ov["incidents"]
     mttr = st["mean_mttr_hr"]
-    tiles = html.Div(style={"display": "grid", "gridTemplateColumns": "repeat(4,1fr)", "gap": "12px", "margin": "12px 0"},
+    tiles = html.Div(className="pg-grid", style={"display": "grid", "gridTemplateColumns": "repeat(5,1fr)",
+                     "gap": "12px", "margin": "12px 0"},
                      children=[_tile("未結 open", str(st["open"])), _tile("處理中 ack", str(st["ack"])),
-                               _tile("已關閉", str(st["closed"])), _tile("平均 MTTR(小時)", "—" if mttr is None else str(mttr))])
+                               _tile("已關閉", str(st["closed"])), _tile("誤報", str(st.get("false_alarm", 0))),
+                               _tile("平均 MTTR(小時)", "—" if mttr is None else str(mttr))])
     roi_card = _card([
         html.Div("導入效益估算（情境假設，非實測損益）", style={"fontWeight": 500}),
         html.Div(f"critical {roi['n_critical_events']} 件 → 假設避免 {roi['assumed_prevented_stops']} 次非計畫停車 → 估省 ${roi['est_savings']:,.0f}",
@@ -542,7 +553,11 @@ def _events_body(screen, _r, _t):
                 acts.append(_btn("認領 ACK", {"type": "ack-inc", "id": it["id"]}, style={"marginRight": "8px", "padding": "5px 12px"}))
             if it["status"] in ("open", "ack"):
                 acts.append(dcc.Input(id={"type": "note-inc", "id": it["id"]}, type="text", placeholder="本案處置記錄",
-                                      style={"width": "240px", "marginRight": "8px"}))
+                                      style={"width": "220px", "marginRight": "8px"}))
+                acts.append(dcc.Dropdown(id={"type": "reason-inc", "id": it["id"]}, clearable=False, value="real",
+                            options=[{"label": "真實處置", "value": "real"}, {"label": "誤報", "value": "false_alarm"},
+                                     {"label": "已知忽略", "value": "ignore"}],
+                            style={"width": "130px", "display": "inline-block", "marginRight": "8px", "verticalAlign": "middle"}))
                 acts.append(_btn("關閉", {"type": "close-inc", "id": it["id"]}, primary=True, style={"padding": "5px 12px"}))
             mttr_line = f"MTTR {it['mttr_sec'] / 3600:.2f} 小時｜處置：{it.get('close_note')}" if it.get("mttr_sec") else ""
             cards.append(_card([
@@ -560,9 +575,9 @@ def _events_body(screen, _r, _t):
 
 @app.callback(Output("events-refresh", "data"),
               Input({"type": "ack-inc", "id": ALL}, "n_clicks"), Input({"type": "close-inc", "id": ALL}, "n_clicks"),
-              State({"type": "note-inc", "id": ALL}, "value"), State("event-actor", "value"),
-              State("events-refresh", "data"), prevent_initial_call=True)
-def _event_action(_a, _c, _notes, actor, refresh):
+              State({"type": "note-inc", "id": ALL}, "value"), State({"type": "reason-inc", "id": ALL}, "value"),
+              State("event-actor", "value"), State("events-refresh", "data"), prevent_initial_call=True)
+def _event_action(_a, _c, _notes, _reasons, actor, refresh):
     if not ctx.triggered or not ctx.triggered[0].get("value"):
         return no_update
     t = ctx.triggered_id
@@ -570,16 +585,18 @@ def _event_action(_a, _c, _notes, actor, refresh):
         return no_update
     actor = (actor or "").strip() or "未具名"  # 記入稽核軌跡（取代寫死「工程師」；真 auth 為 P2）
     store = IncidentStore(_INCIDENTS)
+
+    def _by_id(group_idx, default=""):  # 依事件 id 取本案卡片的值（note/reason group）
+        for st in ctx.states_list[group_idx]:
+            if isinstance(st.get("id"), dict) and st["id"].get("id") == t["id"]:
+                return st.get("value") or default
+        return default
+
     try:
         if t["type"] == "ack-inc":
             store.ack(t["id"], by=actor)
         else:
-            note = ""  # 取「本案卡片」的處置記錄（依 id 對應，不再共用單一框 → 不會貼錯案）
-            for st in ctx.states_list[0]:
-                if isinstance(st.get("id"), dict) and st["id"].get("id") == t["id"]:
-                    note = st.get("value") or ""
-                    break
-            store.close(t["id"], note=note or "已處置", by=actor)
+            store.close(t["id"], note=_by_id(0) or "已處置", by=actor, reason=_by_id(1, "real"))
     except Exception:
         return no_update
     return (refresh or 0) + 1

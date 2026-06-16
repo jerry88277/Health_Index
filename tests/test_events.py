@@ -62,6 +62,22 @@ def test_stats_mttr(tmp_path):
     assert st["mean_mttr_sec"] == 1800.0 and st["mean_mttr_hr"] == 0.5
 
 
+def test_false_alarm_excluded_from_mttr_and_roi(tmp_path):
+    """現場工程師/處長：誤報(close_reason=false_alarm)不計入 MTTR 與 ROI（不汙染指標）。"""
+    from health_index.deploy.roi import estimate_roi
+
+    s = _store(tmp_path)
+    a = s.open_incident(product="A", window=[0, 60], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0)
+    s.close(a.id, note="其實沒事", by="工", at=_T0, reason="false_alarm")  # 0s，誤報
+    b = s.open_incident(product="B", window=[0, 60], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0)
+    s.close(b.id, note="真修", by="工", at=_T1, reason="real")              # 1800s，真實
+    st = s.stats()
+    assert st["false_alarm"] == 1 and st["closed"] == 2
+    assert st["mean_mttr_sec"] == 1800.0  # 只算真實處置(B)，誤報(A,0s)排除
+    r = estimate_roi(s.list(), avg_loss_per_unplanned_stop=1_000_000)
+    assert r["n_critical_events"] == 1  # A(誤報)排除，只剩 B
+
+
 def test_severity_rule():
     """確定性嚴重度：低健康+高可信=critical；低可信=warning（存疑不誇大）；健康=info。"""
     assert severity_of(0.40, 0.9) == "critical"
