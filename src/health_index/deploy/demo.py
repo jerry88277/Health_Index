@@ -22,6 +22,7 @@ from ..y_health import YHealthIndex
 from .acceptance import acceptance_from_dataset
 from .alarms import build_alarm_event
 from .bundle import build_bundle, load, save
+from .events import IncidentStore
 from .runner import WindowScore, run_replay
 from .sources import FrameSource
 
@@ -345,3 +346,48 @@ def monitoring_overview(models_dir: str = "models", *, window: int = 60) -> list
             rec["status"] = "data_unavailable"
         out.append(rec)
     return out
+
+
+def plant_overview(models_dir: str = "models", *, incidents_path: str | None = None, window: int = 60) -> dict:
+    """全廠視圖（生產處長，P2）：各裝置（=模型/產品）當前健康燈 + 未結事件數，彙總成全廠總燈。
+
+    全廠總燈：任一裝置告警→alarm；皆健康→healthy；無裝置→empty。incidents_path 提供時附各裝置 active 事件數。
+    """
+    assets = monitoring_overview(models_dir, window=window)
+    if incidents_path:
+        st = IncidentStore(incidents_path)
+        for a in assets:
+            a["active_incidents"] = sum(1 for i in st.list(product=a["product"]) if i["status"] in ("open", "ack"))
+    n_alarm = sum(1 for a in assets if a["status"] == "alarm")
+    plant_status = "empty" if not assets else ("alarm" if n_alarm else "healthy")
+    return {"plant_status": plant_status, "n_assets": len(assets), "n_alarm": n_alarm, "assets": assets}
+
+
+def incidents_to_csv(incidents: list[dict]) -> str:
+    """事件清單 → CSV 字串（工程師/處長匯出、稽核留痕，P1）。"""
+    import csv
+    import io
+
+    cols = ["id", "product", "detected_at", "severity", "status", "health", "confidence", "top_cause",
+            "ack_by", "ack_at", "closed_at", "mttr_sec", "close_note"]
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    w.writeheader()
+    for it in incidents:
+        w.writerow(it)
+    return buf.getvalue()
+
+
+def timeline_to_csv(points: list[dict]) -> str:
+    """健康時間線 → CSV 字串（匯出窗級指標，P1）。"""
+    import csv
+    import io
+
+    cols = ["ts", "start", "end", "region", "health_index", "confidence", "spe_mean", "t2_mean", "gsi_mean",
+            "raw_alarm", "persisted_alarm"]
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    w.writeheader()
+    for p in points:
+        w.writerow(p)
+    return buf.getvalue()
