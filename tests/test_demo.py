@@ -155,6 +155,43 @@ def test_window_detail_no_y_health_when_y_insufficient(tmp_path):
     assert d["soft_sensor"]["available"] is False
 
 
+def test_score_timeline_has_wall_clock_ts(tmp_path):
+    """P0（作業員/現場工程師）：時間線每窗帶真實時間戳 ts（對齊 DCS/historian），非僅樣本索引。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    tl = demo.score_timeline(m["bundle_path"], "synthetic", window=60, seed=5, drift_strength=1.2)
+    assert all(p.get("ts") for p in tl["points"])  # 每窗有非空時間戳
+
+
+def test_window_detail_has_verdict(tmp_path):
+    """P0（現場工程師）：下鑽帶『可信/存疑』一句話結論——把數字翻成判斷。golden 窗=正常、drift 窗=告警類。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    from health_index.adapters import synthetic as syn
+
+    _ds, gt = syn.generate(seed=5, drift_strength=1.2)
+    s0 = int(np.flatnonzero(np.asarray(gt.drift_mask))[0])
+    dg = demo.window_detail(m["bundle_path"], "synthetic", 0, 60, compute_fwer=False, seed=5, drift_strength=1.2)
+    dd = demo.window_detail(m["bundle_path"], "synthetic", s0, s0 + 60, compute_fwer=False, seed=5, drift_strength=1.2)
+    assert dg["verdict"]["label"] == "正常"
+    assert dd["verdict"]["label"] in {"可信告警", "存疑（外推）", "存疑（單層/邊緣）"}
+    assert dd["verdict"]["reason"]
+
+
+def test_acceptance_summary_wired(tmp_path):
+    """P0（製程工程師，關鍵）：驗收摘要真的呼叫 acceptance（取代寫死『可上線』）——回 FPR/recall/裁決。"""
+    r = demo.acceptance_summary("synthetic", window=40, seed=5, drift_strength=1.2)
+    assert r["available"] is True
+    assert "holdout_golden_fpr" in r and "passed" in r and r["verdict"]
+    assert isinstance(r["fpr_ok"], bool)
+
+
+def test_monitoring_overview_lists_current_health(tmp_path):
+    """P0（作業員/處長）：總覽列各模型『當前健康紅綠燈』（評最後一窗），非僅檔名。"""
+    demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    ov = demo.monitoring_overview(str(tmp_path), window=60)
+    assert len(ov) == 1 and ov[0]["product"] == "synthetic"
+    assert ov[0]["status"] in {"healthy", "alarm"} and isinstance(ov[0]["health"], float)
+
+
 def test_score_timeline_rejects_corrupt_bundle(tmp_path):
     """WHY：步驟4 載入 bundle 走 verify——指紋不符（版本漂移/損毀）拒載，不靜默用壞模型評分。"""
     m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5)

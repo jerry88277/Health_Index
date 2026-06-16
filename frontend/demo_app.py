@@ -84,20 +84,32 @@ def _home_view():
     ]
 
 
+_STATUS = {"healthy": ("● 健康", _OK), "alarm": ("● 告警", _BAD), "data_unavailable": ("○ 資料源不可得", "#888"),
+           "unknown": ("○ 未知", "#888")}
+
+
 @app.callback(Output("home-metrics", "children"), Input("screen", "data"))
 def _home_metrics(screen):
-    models = sorted(glob.glob(os.path.join(_MODELS_DIR, "*.joblib")))
+    ov = demo.monitoring_overview(_MODELS_DIR)  # 各模型當前健康（評最後一窗）
+    n_alarm = sum(1 for r in ov if r["status"] == "alarm")
     sources = demo.available_datasets()
     tiles = html.Div(style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "12px"}, children=[
-        _tile("監控中模型", str(len(models))),
+        _tile("監控中模型", str(len(ov))),
+        _tile("告警中", str(n_alarm)),
         _tile("可監控資料源", str(len(sources))),
-        _tile("資料源清單", "、".join(sources[:4]) + ("…" if len(sources) > 4 else ""), small=True),
     ])
-    if models:
-        cards = [_card([html.Div(os.path.splitext(os.path.basename(p))[0], style={"fontWeight": 500}),
-                        html.Div("監控中", style={"color": _OK, "fontSize": "13px"})],
-                       style={"display": "inline-block", "width": "180px", "marginRight": "10px"}) for p in models]
-        body = html.Div([html.Div("已建立模型", style={"fontWeight": 500, "margin": "8px 0"}), html.Div(cards)])
+    if ov:
+        cards = []
+        for r in ov:
+            txt, col = _STATUS.get(r["status"], _STATUS["unknown"])
+            hp = f"健康度 {r['health']}" if r["health"] is not None else "（需該資料源才能評分）"
+            cards.append(_card([
+                html.Div(r["product"], style={"fontWeight": 500}),
+                html.Div(txt, style={"color": col, "fontSize": "14px", "margin": "4px 0"}),
+                html.Div(hp, style={"color": "#51607a", "fontSize": "12px"}),
+            ], style={"display": "inline-block", "width": "190px", "marginRight": "10px", "verticalAlign": "top",
+                      "borderColor": col if r["status"] == "alarm" else "#e3e8ef"}))
+        body = html.Div([html.Div("已建立模型（當前健康）", style={"fontWeight": 500, "margin": "8px 0"}), html.Div(cards)])
     else:
         body = html.Div("尚無模型。點右上「＋ 新建監控模型」開始，選一段正常時期當基準。",
                         style={"color": "#51607a", "background": "#f6f7f9", "padding": "14px", "borderRadius": "10px"})
@@ -267,11 +279,25 @@ def _build(_n, name, grange):
     try:
         m = demo.build_and_save_model(name, golden=tuple(grange), models_dir=_MODELS_DIR,
                                       created_at=_dt.datetime.now().isoformat())
+        acc = demo.acceptance_summary(name, window=60)  # 真驗收（取代寫死「可上線」）
+        if acc.get("available"):
+            ok = acc["passed"]
+            recall_txt = f"、事故 recall {acc['drift_recall']}" if acc["drift_recall"] is not None else ""
+            acc_line = html.Div([
+                html.Div(("✅ 驗收通過：" if ok else "⛔ 驗收未過：") + acc["verdict"],
+                         style={"color": _OK if ok else _BAD, "fontWeight": 500}),
+                html.Div(f"hold-out golden 誤報率 {acc['holdout_golden_fpr']}"
+                         f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{recall_txt}",
+                         style={"fontSize": "13px", "color": "#51607a"}),
+            ])
+        else:
+            acc_line = html.Div(f"（驗收未跑：{acc.get('error', '資料不足')}）", style={"fontSize": "13px", "color": "#888"})
         msg = html.Div([
             html.Div(f"✅ 模型已建立並存檔：{m['product']}", style={"color": _OK, "fontWeight": 500}),
             html.Div(f"golden {m['golden_range']}，{m['n_golden']} 樣本，指紋健康度 {m['fingerprint_hi']:.3f}"
                      + ("，含軟測量 Ŷ" if m.get("has_y_health") else ""), style={"fontSize": "13px", "color": "#51607a"}),
-            html.Div("驗收：黃金期誤報率受控、可上線。按「下一關」查看結果。", style={"fontSize": "13px", "color": _OK}),
+            acc_line,
+            html.Div("按「下一關」查看健康指標。", style={"fontSize": "13px", "color": "#51607a", "marginTop": "4px"}),
         ])
         return m, msg
     except Exception as e:
@@ -292,24 +318,26 @@ def _run(screen, bundle, name, window):
     except Exception as e:
         return html.Span(f"❌ 模擬失敗：{e}", style={"color": _BAD}), go.Figure(), go.Figure()
     pts = tl["points"]
-    xs = [p["start"] for p in pts]
+    xs = [p.get("ts") or p["start"] for p in pts]  # wall-clock（對齊 DCS/historian）；無時間戳退回樣本索引
     his = [p["health_index"] for p in pts]
     colors = [_REGION_COLOR[p["region"]] for p in pts]
-    custom = [[p["spe_mean"], p["gsi_mean"], _REGION_ZH[p["region"]]] for p in pts]
+    # customdata 末位帶窗 start（時間軸改 wall-clock 後，_detail 不能再用 x 反推索引）
+    custom = [[p["spe_mean"], p["gsi_mean"], _REGION_ZH[p["region"]], p["start"]] for p in pts]
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=xs, y=his, mode="lines+markers", marker={"color": colors, "size": 9},
                   line={"color": "#999"}, name="健康指標", customdata=custom,
-                  hovertemplate="樣本 %{x}<br>健康度 %{y:.3f}<br>SPE %{customdata[0]}　GSI %{customdata[1]}<br>%{customdata[2]}<extra></extra>"))
+                  hovertemplate="時間 %{x}<br>健康度 %{y:.3f}<br>SPE %{customdata[0]}　GSI %{customdata[1]}<br>%{customdata[2]}<extra></extra>"))
     fig.add_trace(go.Scatter(x=xs, y=[p["confidence"] for p in pts], mode="lines",
                   line={"color": _CONF, "dash": "dot"}, name="可信度",
-                  hovertemplate="樣本 %{x}<br>可信度 %{y:.3f}<extra></extra>"))
-    al = [(p["start"], p["health_index"]) for p in pts if p["persisted_alarm"]]
+                  hovertemplate="時間 %{x}<br>可信度 %{y:.3f}<extra></extra>"))
+    al = [(p.get("ts") or p["start"], p["health_index"], p["start"]) for p in pts if p["persisted_alarm"]]
     if al:
         fig.add_trace(go.Scatter(x=[a[0] for a in al], y=[a[1] for a in al], mode="markers",
-                      marker={"symbol": "x", "color": _BAD, "size": 14}, name="告警"))
+                      marker={"symbol": "x", "color": _BAD, "size": 14}, name="告警",
+                      customdata=[[a[2]] for a in al]))
     fig.add_hline(y=0.6, line_dash="dash", line_color="#888", annotation_text="告警門檻 0.6")
     fig.update_layout(yaxis={"title": "健康指標 (1=健康)", "range": [0, 1.05]},
-                      xaxis={"title": "時間（樣本索引）"}, height=420, legend={"orientation": "h"})
+                      xaxis={"title": "時間"}, height=420, legend={"orientation": "h"})
     ymap = go.Figure()
     if tl.get("has_y_mapping"):
         yhat = [p.get("yhat_mean") for p in pts]
@@ -325,7 +353,7 @@ def _run(screen, bundle, name, window):
             ymap.add_trace(go.Scatter(x=[a[0] for a in ya], y=[a[1] for a in ya], mode="markers",
                            marker={"color": _BAD, "size": 6}, name="實際 Y（量測到達）"))
         ymap.update_layout(title="L3 軟測量：Ŷ 預測 vs 實際 Y（帶外＝X→Y 關係偏移）",
-                           xaxis={"title": "時間（樣本索引）"}, yaxis={"title": "Y（軟量測標的）"},
+                           xaxis={"title": "時間"}, yaxis={"title": "Y（軟量測標的）"},
                            height=300, legend={"orientation": "h"})
     else:
         ymap.update_layout(height=80, annotations=[{"text": "此模型無 Y 軟量測標的（不顯示映射子圖）",
@@ -343,8 +371,14 @@ def _run(screen, bundle, name, window):
 def _detail(click, bundle, name, window):
     if not bundle or not click:
         return ""
-    start = int(click["points"][0]["x"])
-    end = start + int(window or 60)
+    pt = click["points"][0]
+    w = int(window or 60)
+    cd = pt.get("customdata")  # 末位為窗 start（x 軸已改 wall-clock，不能用 x 反推）
+    if cd:
+        start = int(cd[-1])
+    else:  # 退路：非重疊窗 → pointIndex × 窗長
+        start = int(pt.get("pointNumber", pt.get("pointIndex", 0))) * w
+    end = start + w
     try:
         d = demo.window_detail(bundle["bundle_path"], name, start, end, compute_fwer=True)
     except Exception as e:
@@ -365,8 +399,13 @@ def _detail(click, bundle, name, window):
                    f"　X→Y 可信度：{mh if mh is not None else '觀測不足'}")
     else:
         ss_line = "軟測量：本窗尚無 Y 到達（延遲量測）——待 Y 落地後給 Ŷ 與 X→Y 可信度。"
+    v = d.get("verdict", {})
+    vcol = {"ok": _OK, "warn": "#b26a00", "bad": _BAD}.get(v.get("tone"), "#51607a")
     return _card([
         html.H5(f"窗 [{start}:{end}] 詳細指標　{'⚠ 告警' if d['alarm'] else '✅ 正常'}", style={"margin": "0 0 8px"}),
+        html.Div([html.Span(v.get("label", ""), style={"fontWeight": 500}), html.Span("　" + v.get("reason", ""))],
+                 style={"background": "#f6f7f9", "borderLeft": f"4px solid {vcol}", "padding": "8px 12px",
+                        "color": vcol, "marginBottom": "8px"}),
         html.Div(f"健康度 {d['subscores']}　|　可信度 {d['confidence']}"
                  "（操作域 T²；低＝外推應保留。低健康＋高可信＝可信的告警）",
                  style={"marginBottom": "6px", "fontWeight": 500}),

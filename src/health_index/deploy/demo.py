@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import glob
 import os
 import warnings
 
@@ -16,8 +17,9 @@ import numpy as np
 from ..adapters import registry
 from ..config import DEFAULT
 from ..health import HealthIndex
-from ..interface import GRADE_LABEL, Y_VALUE
+from ..interface import GRADE_LABEL, TIMESTAMP, Y_VALUE
 from ..y_health import YHealthIndex
+from .acceptance import acceptance_from_dataset
 from .alarms import build_alarm_event
 from .bundle import build_bundle, load, save
 from .runner import WindowScore, run_replay
@@ -158,12 +160,14 @@ def score_timeline(
     m = bundle.health.mspc_
     yh = bundle.y_health  # L3 映射模組（軟測量）；有則每窗附 Ŷ vs 實際 Y（供對照子圖）
     yvals = ds.frame[Y_VALUE].to_numpy(dtype=float) if (yh is not None and Y_VALUE in ds.frame.columns) else None
+    ts_col = ds.frame[TIMESTAMP] if TIMESTAMP in ds.frame.columns else None  # wall-clock（對齊 DCS/historian）
     points = []
     for s in scores:
         Xw = src.x_slice(s.start, s.end)
         pt = {
             "start": s.start,
             "end": s.end,
+            "ts": str(ts_col.iloc[s.start]) if ts_col is not None else None,  # 窗起點真實時間戳
             "health_index": round(s.health_index, 4),
             "raw_alarm": s.raw_alarm,
             "persisted_alarm": s.persisted_alarm,
@@ -280,4 +284,64 @@ def window_detail(
                 }
             )
         detail["soft_sensor"] = ss_block
+    # 真偽一句話結論（現場工程師：把數字翻成判斷）。確定性規則（Rule 5）：可信度 + 多層一致 + 是否告警。
+    n_bad = sum(1 for k in ("L1", "L2", "L4") if detail["layers"][k]["unhealthy"])
+    conf, alarm = detail["confidence"], detail["alarm"]
+    if not alarm:
+        verdict = {"label": "正常", "tone": "ok", "reason": "未達告警門檻"}
+    elif conf < 0.6:
+        verdict = {"label": "存疑（外推）", "tone": "warn",
+                   "reason": f"可信度 {conf} 偏低，操作點可能在建模域外；先觀察、對照歷史趨勢再判"}
+    elif n_bad >= 2:
+        verdict = {"label": "可信告警", "tone": "bad",
+                   "reason": f"可信度 {conf} 高且 {n_bad} 層一致異常；建議現場查下列肇因參數"}
+    else:
+        verdict = {"label": "存疑（單層/邊緣）", "tone": "warn",
+                   "reason": f"僅 {n_bad} 層異常；建議持續觀察、確認非雜訊"}
+    detail["verdict"] = verdict
     return detail
+
+
+def acceptance_summary(name: str, *, holdout_frac: float = 0.5, window: int = 60, **build_kwargs) -> dict:
+    """建模後驗收摘要（製程工程師簽核依據）：時間連續 hold-out 的 golden FPR / drift recall / SPC-blind / 裁決。
+
+    接 ``acceptance.acceptance_from_dataset``（取代前端寫死的「可上線」文案）；資料/驗收失敗回 available=False。
+    compute_fwer=False 以維建模流程互動速度（Rule 6）。
+    """
+    try:
+        r = acceptance_from_dataset(name, holdout_frac=holdout_frac, window=window, compute_fwer=False, **build_kwargs)
+    except Exception as e:  # 資料缺/golden 太短等 → 誠實標不可驗收，不假裝可上線（Rule 12）
+        return {"available": False, "error": str(e)}
+    return {
+        "available": True,
+        "holdout_golden_fpr": round(float(r.holdout_golden_fpr), 4),
+        "fpr_ok": bool(r.fpr_ok),
+        "drift_recall": None if r.drift_recall is None else round(float(r.drift_recall), 4),
+        "recall_ok": r.recall_ok,
+        "spc_blind": r.spc_blind,
+        "passed": bool(r.passed),
+        "verdict": r.verdict(),
+    }
+
+
+def monitoring_overview(models_dir: str = "models", *, window: int = 60) -> list[dict]:
+    """監控總覽（作業員/處長第一眼）：列出已建模型的**當前健康紅綠燈**（評最後一窗），非僅檔名。
+
+    product==資料源名（demo 慣例）→ 重建資料集評最後一窗 health/alarm。資料源不可得則標 data_unavailable。
+    """
+    out: list[dict] = []
+    for p in sorted(glob.glob(os.path.join(models_dir, "*.joblib"))):
+        product = os.path.splitext(os.path.basename(p))[0]
+        rec = {"product": product, "bundle_path": p, "health": None, "alarm": None, "status": "unknown"}
+        try:
+            b = load(p)
+            ds, gt = registry.build(product)
+            X = ds.frame[list(b.x_columns)].to_numpy(dtype=float)
+            Xw = X[-window:] if len(X) >= window else X
+            rec["health"] = round(float(b.health.health_index(Xw)), 3)
+            rec["alarm"] = bool(b.health.alarm(Xw, compute_fwer=False))
+            rec["status"] = "alarm" if rec["alarm"] else "healthy"
+        except Exception:  # 資料源不在 registry / 檔損 → 誠實標，不杜撰健康度
+            rec["status"] = "data_unavailable"
+        out.append(rec)
+    return out
