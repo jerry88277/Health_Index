@@ -156,31 +156,40 @@ def score_timeline(
         return "other"
 
     m = bundle.health.mspc_
+    yh = bundle.y_health  # L3 映射模組（軟測量）；有則每窗附 Ŷ vs 實際 Y（供對照子圖）
+    yvals = ds.frame[Y_VALUE].to_numpy(dtype=float) if (yh is not None and Y_VALUE in ds.frame.columns) else None
     points = []
     for s in scores:
         Xw = src.x_slice(s.start, s.end)
-        points.append(
-            {
-                "start": s.start,
-                "end": s.end,
-                "health_index": round(s.health_index, 4),
-                "raw_alarm": s.raw_alarm,
-                "persisted_alarm": s.persisted_alarm,
-                "consecutive": s.consecutive,
-                "region": region(s.start, s.end),
-                "subscores": {k: round(v, 3) for k, v in s.subscores.items()},
-                # X-only 多變量指標（cheap，無 permutation）：供時間線呈現「SPE 升起」等 AVM 細節（C1）
-                "spe_mean": round(float(m.spe(Xw).mean()), 4),
-                "t2_mean": round(float(m.t2(Xw).mean()), 4),
-                "gsi_mean": round(float(m.gsi(Xw).mean()), 4),
-                "confidence": round(float(bundle.health.confidence(Xw)), 4),  # C2：HI 判讀可信度（域相似度）
-            }
-        )
+        pt = {
+            "start": s.start,
+            "end": s.end,
+            "health_index": round(s.health_index, 4),
+            "raw_alarm": s.raw_alarm,
+            "persisted_alarm": s.persisted_alarm,
+            "consecutive": s.consecutive,
+            "region": region(s.start, s.end),
+            "subscores": {k: round(v, 3) for k, v in s.subscores.items()},
+            # X-only 多變量指標（cheap，無 permutation）：供時間線呈現「SPE 升起」等 AVM 細節（C1）
+            "spe_mean": round(float(m.spe(Xw).mean()), 4),
+            "t2_mean": round(float(m.t2(Xw).mean()), 4),
+            "gsi_mean": round(float(m.gsi(Xw).mean()), 4),
+            "confidence": round(float(bundle.health.confidence(Xw)), 4),  # C2：HI 判讀可信度（域相似度）
+        }
+        if yh is not None:  # L3 映射：Ŷ + conformal 帶 + 實際 Y（窗內有觀測才有）→ Ŷ vs Y 對照
+            yhat = yh.ss_.predict(Xw)
+            pt["yhat_mean"] = round(float(np.mean(yhat)), 4)
+            pt["yhat_band"] = round(float(np.mean(yh._band_half(Xw))), 4)
+            yw = yvals[s.start : s.end]
+            obs = np.isfinite(yw)
+            pt["y_actual_mean"] = round(float(yw[obs].mean()), 4) if bool(obs.any()) else None
+        points.append(pt)
     return {
         "product": bundle.product,
         "window": int(window),
         "points": points,
         "n_alarms": int(sum(p["persisted_alarm"] for p in points)),
+        "has_y_mapping": yh is not None,  # 前端據此決定是否畫 Ŷ vs Y 子圖
     }
 
 

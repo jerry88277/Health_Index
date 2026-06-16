@@ -63,6 +63,7 @@ app.layout = html.Div(
             html.Button("執行線上模擬", id="btn-run", n_clicks=0, style={"padding": "8px 16px", "fontWeight": "bold"}),
             dcc.Loading(html.Div(id="run-status", style={"marginTop": "10px", "fontSize": "18px", "fontWeight": "bold"})),
             dcc.Loading(dcc.Graph(id="timeline")),
+            dcc.Loading(dcc.Graph(id="ymap")),  # L3 映射：Ŷ vs 實際 Y 對照（有軟量測 Y 時）
             html.P("點選時間線上任一窗 → 下方顯示該窗詳細指標（GSI / T² / SPE 與控制限、RBC 肇因排行、各層 p-value）。",
                    style={"color": "#666", "fontSize": "13px"}),
             dcc.Loading(html.Div(id="window-detail")),
@@ -115,18 +116,18 @@ def _preview(_n, name, window):
 
 
 @app.callback(
-    Output("run-status", "children"), Output("timeline", "figure"),
+    Output("run-status", "children"), Output("timeline", "figure"), Output("ymap", "figure"),
     Input("btn-run", "n_clicks"),
     State("bundle-store", "data"), State("dataset", "value"), State("window", "value"),
     prevent_initial_call=True,
 )
 def _run(_n, bundle, name, window):
     if not bundle:
-        return html.Span("⚠ 請先在 ② 建立模型", style={"color": "#ef6c00"}), go.Figure()
+        return html.Span("⚠ 請先在 ② 建立模型", style={"color": "#ef6c00"}), go.Figure(), go.Figure()
     try:
         tl = demo.score_timeline(bundle["bundle_path"], name, window=int(window))
     except Exception as e:
-        return html.Span(f"❌ 模擬失敗：{e}", style={"color": "#c62828"}), go.Figure()
+        return html.Span(f"❌ 模擬失敗：{e}", style={"color": "#c62828"}), go.Figure(), go.Figure()
     pts = tl["points"]
     xs = [p["start"] for p in pts]
     his = [p["health_index"] for p in pts]
@@ -150,9 +151,30 @@ def _run(_n, bundle, name, window):
         fig.add_trace(go.Scatter(x=[a[0] for a in al], y=[a[1] for a in al], mode="markers", marker={"symbol": "x", "color": "#c62828", "size": 14}, name="告警"))
     fig.add_hline(y=0.6, line_dash="dash", line_color="#888", annotation_text="告警門檻 0.6")
     fig.update_layout(yaxis={"title": "健康指標 (1=健康)", "range": [0, 1.05]}, xaxis={"title": "時間（樣本索引）"}, height=420, legend={"orientation": "h"})
+    # L3 映射子圖：Ŷ + conformal 帶 + 實際 Y（有軟量測 Y 時）
+    ymap = go.Figure()
+    if tl.get("has_y_mapping"):
+        yhat = [p.get("yhat_mean") for p in pts]
+        band = [p.get("yhat_band") or 0 for p in pts]
+        up = [h + b for h, b in zip(yhat, band)]
+        lo = [h - b for h, b in zip(yhat, band)]
+        ymap.add_trace(go.Scatter(x=xs + xs[::-1], y=up + lo[::-1], fill="toself", fillcolor="rgba(21,101,192,0.12)",
+                                  line={"color": "rgba(0,0,0,0)"}, name="conformal 帶", hoverinfo="skip"))
+        ymap.add_trace(go.Scatter(x=xs, y=yhat, mode="lines", line={"color": "#1565c0"}, name="Ŷ 軟測量預測"))
+        ya = [(p["start"], p["y_actual_mean"]) for p in pts if p.get("y_actual_mean") is not None]
+        if ya:
+            ymap.add_trace(go.Scatter(x=[a[0] for a in ya], y=[a[1] for a in ya], mode="markers",
+                                      marker={"color": "#c62828", "size": 6}, name="實際 Y（量測到達）"))
+        ymap.update_layout(title="L3 軟測量：Ŷ 預測 vs 實際 Y（帶外＝X→Y 關係偏移）",
+                           xaxis={"title": "時間（樣本索引）"}, yaxis={"title": "Y（軟量測標的）"},
+                           height=300, legend={"orientation": "h"})
+    else:
+        ymap.update_layout(height=80, annotations=[{"text": "此模型無 Y 軟量測標的（不顯示映射子圖）",
+                           "showarrow": False, "font": {"color": "#999"}}],
+                           xaxis={"visible": False}, yaxis={"visible": False})
     n_alarm = tl["n_alarms"]
     status = html.Span(f"{'⚠ 偵測到 ' + str(n_alarm) + ' 個告警窗（製程關係偏移）' if n_alarm else '✅ 全程健康'}", style={"color": "#c62828" if n_alarm else "#2e7d32"})
-    return status, fig
+    return status, fig, ymap
 
 
 @app.callback(

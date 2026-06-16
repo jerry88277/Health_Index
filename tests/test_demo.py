@@ -135,6 +135,17 @@ def test_window_detail_has_confidence_and_soft_sensor(tmp_path):
         assert "yhat_mean" in d["soft_sensor"]  # 有 Y 觀測→給 Ŷ
 
 
+def test_score_timeline_carries_yhat_vs_actual_y(tmp_path):
+    """L3 映射呈現：有 Y 映射時，時間線每窗帶 Ŷ（yhat_mean）+ conformal 帶（yhat_band）；窗內有 Y 觀測
+    則帶實際 Y（y_actual_mean）→ 前端可畫 Ŷ vs 實際 Y 對照子圖。has_y_mapping 旗標供前端判斷。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    tl = demo.score_timeline(m["bundle_path"], "synthetic", window=60, seed=5, drift_strength=1.2)
+    assert tl["has_y_mapping"] is True
+    p0 = tl["points"][0]
+    assert "yhat_mean" in p0 and "yhat_band" in p0 and "y_actual_mean" in p0
+    assert any(p["y_actual_mean"] is not None for p in tl["points"])  # 至少部分窗有實際 Y（稀疏軟量測）
+
+
 def test_window_detail_no_y_health_when_y_insufficient(tmp_path):
     """C2 WHY（紅隊 RT2-g，誠實降級路徑）：Y 不足（synthetic_pgn golden Y 筆數 ≪ p=128，n≤p）→ bundle
     無 y_health → window_detail 軟測量區塊 available=False。鎖住「無 Y 時不假裝有軟測量」（非恆 available）。"""
