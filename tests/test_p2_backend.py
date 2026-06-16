@@ -17,6 +17,18 @@ def test_plant_overview_aggregates_assets(tmp_path):
     assert ov["assets"][0]["active_incidents"] == 1  # 未結事件數附上
 
 
+def test_plant_hierarchy_groups_by_config(tmp_path):
+    """廠區階層（處長）：無 config → 未分區；有 plant.json(product→區域) → 依區域分組。"""
+    import json as _j
+
+    demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    h0 = demo.plant_hierarchy(str(tmp_path))
+    assert h0["configured"] is False and h0["areas"][0]["area"] == "未分區"
+    _j.dump({"synthetic": "常壓蒸餾"}, open(str(tmp_path / "plant.json"), "w", encoding="utf-8"))
+    h1 = demo.plant_hierarchy(str(tmp_path))
+    assert h1["configured"] is True and any(a["area"] == "常壓蒸餾" for a in h1["areas"])
+
+
 def test_incidents_to_csv_has_header_and_rows():
     inc = [{"id": "INC-0001", "product": "A", "detected_at": "t", "severity": "critical", "status": "closed",
             "health": 0.4, "confidence": 0.9, "top_cause": "T1", "mttr_sec": 1800.0, "close_note": "ok"}]

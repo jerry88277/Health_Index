@@ -427,6 +427,25 @@ def plant_overview(models_dir: str = "models", *, incidents_path: str | None = N
     return {"plant_status": plant_status, "n_assets": len(assets), "n_alarm": n_alarm, "assets": assets}
 
 
+def plant_hierarchy(models_dir: str = "models", *, incidents_path: str | None = None, window: int = 60) -> dict:
+    """廠區階層視圖（處長 P2）：依 ``{models_dir}/plant.json``（product→區域）把裝置分組成區域。
+
+    無 config → 全部歸「未分區」（與扁平等價）。真實 廠→區→裝置 拓樸為客戶專有，以 config 承載（stub）。
+    """
+    pv = plant_overview(models_dir, incidents_path=incidents_path, window=window)
+    try:
+        with open(os.path.join(models_dir, "plant.json"), encoding="utf-8") as f:
+            amap = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        amap = {}
+    groups: dict = {}
+    for a in pv["assets"]:
+        groups.setdefault(amap.get(a["product"], "未分區"), []).append(a)
+    areas = [{"area": k, "assets": v, "n_alarm": sum(1 for x in v if x["status"] == "alarm")}
+             for k, v in groups.items()]
+    return {**pv, "areas": areas, "configured": bool(amap)}
+
+
 def incidents_to_csv(incidents: list[dict]) -> str:
     """事件清單 → CSV 字串（工程師/處長匯出、稽核留痕，P1）。"""
     import csv

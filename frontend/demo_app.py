@@ -108,10 +108,33 @@ _STATUS = {"healthy": ("● 健康", _OK), "alarm": ("● 告警", _BAD), "data_
            "unknown": ("○ 未知", "#888")}
 
 
+def _asset_card(r):
+    """單一裝置卡（可評分者可點進結果）。"""
+    txt, col = _STATUS.get(r["status"], _STATUS["unknown"])
+    openable = r["status"] in ("healthy", "alarm")
+    hp = f"健康度 {r['health']}" if r["health"] is not None else "（需該資料源才能評分）"
+    ai = r.get("active_incidents", 0)
+    children = [
+        html.Div(r["product"], style={"fontWeight": 500}),
+        html.Div(txt, style={"color": col, "fontSize": "14px", "margin": "4px 0"}),
+        html.Div(hp, style={"color": "#51607a", "fontSize": "12px"}),
+        html.Div(f"未結事件 {ai}" if ai else "", style={"color": _BAD, "fontSize": "12px"}),
+        html.Div("點此查看 →" if openable else "—",
+                 style={"color": _ACCENT if openable else "#bbb", "fontSize": "12px", "marginTop": "6px"}),
+    ]
+    style = {"display": "inline-block", "width": "190px", "marginRight": "10px", "verticalAlign": "top",
+             "border": f"1px solid {col if r['status'] == 'alarm' else '#e3e8ef'}",
+             "borderRadius": "12px", "padding": "16px 18px", "background": "#fff",
+             "cursor": "pointer" if openable else "default"}
+    if openable:
+        return html.Div(children, id={"type": "open-model", "product": r["product"]}, n_clicks=0, style=style)
+    return html.Div(children, style=style)
+
+
 @app.callback(Output("home-metrics", "children"), Input("screen", "data"), Input("events-refresh", "data"),
               Input("tick", "n_intervals"))
 def _home_metrics(screen, _r, _t):
-    pv = demo.plant_overview(_MODELS_DIR, incidents_path=_INCIDENTS)  # 全廠視圖 + 各裝置未結事件
+    pv = demo.plant_hierarchy(_MODELS_DIR, incidents_path=_INCIDENTS)  # 全廠階層視圖（區域分組）+ 各裝置未結事件
     ov = pv["assets"]
     n_alarm = pv["n_alarm"]
     sources = demo.available_datasets()
@@ -125,29 +148,19 @@ def _home_metrics(screen, _r, _t):
                      children=[_tile("監控中模型", str(len(ov))), _tile("告警中", str(n_alarm)),
                                _tile("可監控資料源", str(len(sources)))])
     if ov:
-        cards = []
-        for r in ov:
-            txt, col = _STATUS.get(r["status"], _STATUS["unknown"])
-            openable = r["status"] in ("healthy", "alarm")  # 可評分才可點進結果
-            hp = f"健康度 {r['health']}" if r["health"] is not None else "（需該資料源才能評分）"
-            ai = r.get("active_incidents", 0)
-            children = [
-                html.Div(r["product"], style={"fontWeight": 500}),
-                html.Div(txt, style={"color": col, "fontSize": "14px", "margin": "4px 0"}),
-                html.Div(hp, style={"color": "#51607a", "fontSize": "12px"}),
-                html.Div(f"未結事件 {ai}" if ai else "", style={"color": _BAD, "fontSize": "12px"}),
-                html.Div("點此查看 →" if openable else "—",
-                         style={"color": _ACCENT if openable else "#bbb", "fontSize": "12px", "marginTop": "6px"}),
-            ]
-            style = {"display": "inline-block", "width": "190px", "marginRight": "10px", "verticalAlign": "top",
-                     "border": f"1px solid {col if r['status'] == 'alarm' else '#e3e8ef'}",
-                     "borderRadius": "12px", "padding": "16px 18px", "background": "#fff",
-                     "cursor": "pointer" if openable else "default"}
-            cards.append(html.Div(children, id={"type": "open-model", "product": r["product"]},
-                                  n_clicks=0, style=style) if openable
-                         else html.Div(children, style=style))
+        blocks = []
+        for area in pv["areas"]:  # 依區域分組（處長階層視圖）
+            ac = _BAD if area["n_alarm"] else "#0f172a"
+            blocks.append(html.Div([
+                html.Div(f"區域：{area['area']}" + (f"（{area['n_alarm']} 告警）" if area["n_alarm"] else ""),
+                         style={"fontWeight": 500, "margin": "10px 0 6px", "color": ac}),
+                html.Div([_asset_card(r) for r in area["assets"]]),
+            ]))
+        note = html.Span() if pv["configured"] else html.Div(
+            "（未設廠區；放 models/plant.json（product→區域）即依廠→區→裝置分組）",
+            style={"color": "#888", "fontSize": "12px", "marginTop": "8px"})
         body = html.Div([html.Div("已建立模型（當前健康）— 點卡片查看結果", style={"fontWeight": 500, "margin": "8px 0"}),
-                         html.Div(cards)])
+                         html.Div(blocks), note])
     else:
         body = html.Div("尚無模型。點右上「＋ 新建監控模型」開始，選一段正常時期當基準。",
                         style={"color": "#51607a", "background": "#f6f7f9", "padding": "14px", "borderRadius": "10px"})
