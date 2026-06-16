@@ -187,6 +187,31 @@ class HealthIndex:
         z = np.clip((t2 - mu) / sig, 0.0, None)
         return float(np.mean(np.exp(-z / self.config.fusion_severity_scale)))
 
+    def score(self, X: np.ndarray, *, compute_fwer: bool = False, alpha: float | None = None) -> dict:
+        """**單次掃描評分（效能熱路徑）**：一次算齊 subscores / health_index / hard_gates / alarm（+選配
+        fwer p-value），避免 ``health_index``/``is_alarm``/``alarm`` 各自重複計算昂貴的 L4（wasserstein/MMD
+        permutation）——高維資料集逐窗評分時 3–4× 重算是主要瓶頸。回傳值與逐一呼叫各方法**等價**（測試鎖定）。
+
+        Returns:
+            {"health_index","subscores","hard_gates","is_alarm","alarm","pvalues"}（pvalues 僅 compute_fwer 時非 None）。
+        """
+        sub = {k: float(v) for k, v in self.subscores(X).items()}  # 1×（含 L4 wasserstein）
+        h = float(np.average([sub["L1"], sub["L2"], sub["L4"]], weights=self.config.fusion_weights))
+        gates = {k: bool(v) for k, v in self.hard_gates(X).items()}  # 1×（含 L4 is_drift MMD）
+        base = bool(h < self.config.hi_alarm_threshold or any(gates.values()))  # = is_alarm
+        pv = None
+        if compute_fwer:
+            try:
+                pv = self.fwer_pvalues(X)
+            except Exception:
+                pv = None
+        a = self.config.fwer_alpha if alpha is None else alpha
+        alarm = base or bool(pv is not None and any(_holm_reject(pv, a).values()))  # = alarm（is_alarm ∨ fwer）
+        return {
+            "health_index": h, "subscores": sub, "hard_gates": gates, "is_alarm": base, "alarm": alarm,
+            "pvalues": None if pv is None else {k: float(v) for k, v in pv.items()},
+        }
+
     def hard_gates(self, X: np.ndarray) -> dict[str, bool]:
         """單層硬閘（任一 True＝該層嚴重破限）；避免致命破壞被融合稀釋。"""
         return {

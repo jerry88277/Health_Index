@@ -192,6 +192,15 @@ def test_monitoring_overview_lists_current_health(tmp_path):
     assert ov[0]["status"] in {"healthy", "alarm"} and isinstance(ov[0]["health"], float)
 
 
+def test_score_timeline_subsamples_when_capped(tmp_path):
+    """#2 修：max_windows 上限 → 加大 step 降採樣，窗數受限（高維/長資料集不卡 LOADING）。subsampled 旗標標示。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    tl = demo.score_timeline(m["bundle_path"], "synthetic", window=60, max_windows=8, seed=5, drift_strength=1.2)
+    assert tl["subsampled"] is True and tl["n_windows"] <= 8
+    # 降採樣後窗起點仍可下鑽（customdata 帶真實 start）
+    assert all("ts" in p and "start" in p for p in tl["points"])
+
+
 def test_score_timeline_rejects_corrupt_bundle(tmp_path):
     """WHY：步驟4 載入 bundle 走 verify——指紋不符（版本漂移/損毀）拒載，不靜默用壞模型評分。"""
     m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5)

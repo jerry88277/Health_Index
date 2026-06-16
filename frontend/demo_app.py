@@ -370,7 +370,7 @@ def _run(screen, bundle, name, window):
                        fillcolor="rgba(21,101,192,0.12)", line={"color": "rgba(0,0,0,0)"},
                        name="conformal 帶", hoverinfo="skip"))
         ymap.add_trace(go.Scatter(x=xs, y=yhat, mode="lines", line={"color": _CONF}, name="Ŷ 軟測量預測"))
-        ya = [(p["start"], p["y_actual_mean"]) for p in pts if p.get("y_actual_mean") is not None]
+        ya = [(p.get("ts") or p["start"], p["y_actual_mean"]) for p in pts if p.get("y_actual_mean") is not None]
         if ya:
             ymap.add_trace(go.Scatter(x=[a[0] for a in ya], y=[a[1] for a in ya], mode="markers",
                            marker={"color": _BAD, "size": 6}, name="實際 Y（量測到達）"))
@@ -382,8 +382,10 @@ def _run(screen, bundle, name, window):
                            "showarrow": False, "font": {"color": "#999"}}],
                            xaxis={"visible": False}, yaxis={"visible": False})
     n_alarm = tl["n_alarms"]
-    status = html.Span("⚠ 偵測到 " + str(n_alarm) + " 個告警窗（製程關係偏移）" if n_alarm else "✅ 全程健康",
-                       style={"color": _BAD if n_alarm else _OK})
+    msg = "⚠ 偵測到 " + str(n_alarm) + " 個告警窗（製程關係偏移）" if n_alarm else "✅ 全程健康"
+    note = (f"　·　高維/長資料集已降採樣為 {tl['n_windows']} 窗顯示" if tl.get("subsampled") else "")
+    status = html.Span([html.Span(msg, style={"color": _BAD if n_alarm else _OK}),
+                        html.Span(note, style={"color": "#888", "fontSize": "13px", "fontWeight": 400})])
     return status, fig, ymap
 
 

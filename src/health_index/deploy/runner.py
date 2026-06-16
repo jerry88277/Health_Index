@@ -84,33 +84,22 @@ def poll_once(
     out: list[WindowScore] = []
     while cur + w <= n:
         X = source.x_slice(cur, cur + w)
-        h = float(hi.health_index(X))
-        sub = {k: float(v) for k, v in hi.subscores(X).items()}
-        gates = {k: bool(v) for k, v in hi.hard_gates(X).items()}
-        # 告警判決收口於 HealthIndex.alarm()（is_alarm ∨ fwer_alarm 聯集；不再於此自拼）。
-        # p-value 先算一次供工程師視圖展示（fwer 欄），並以 _pvalues 傳入 alarm() 避免重算（Rule 6）。
-        pv = None
-        fwer = None
-        if compute_fwer:
-            try:
-                pv = hi.fwer_pvalues(X)
-                fwer = {k: float(v) for k, v in pv.items()}
-            except Exception:  # FWER 校準不可用（golden 太小等）→ 退回 is_alarm 快路徑，不中斷線上評分
-                pv = None
-                fwer = None
-        raw = bool(hi.alarm(X, compute_fwer=compute_fwer and pv is not None, _pvalues=pv))
+        # 單次掃描評分（hi.score）：一次算齊 subscores/health/hard_gates/alarm(+fwer)，避免逐窗 3–4× 重算
+        # 昂貴 L4（高維資料集逐窗評分的主瓶頸；alarm 收口於 hi.score 內，等價 is_alarm ∨ fwer_alarm）。
+        r = hi.score(X, compute_fwer=compute_fwer)
+        raw = bool(r["alarm"])
         cons = cons + 1 if raw else 0
         out.append(
             WindowScore(
                 start=cur,
                 end=cur + w,
-                health_index=h,
-                subscores=sub,
-                hard_gates=gates,
+                health_index=r["health_index"],
+                subscores=r["subscores"],
+                hard_gates=r["hard_gates"],
                 raw_alarm=raw,
                 persisted_alarm=cons >= pk,
                 consecutive=cons,
-                fwer=fwer,
+                fwer=r["pvalues"],
             )
         )
         cur += st

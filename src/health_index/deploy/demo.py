@@ -132,18 +132,30 @@ def score_timeline(
     window: int = 60,
     compute_fwer: bool = False,
     persistence_k: int | None = None,
+    max_windows: int | None = None,
     **build_kwargs,
 ) -> dict:
     """步驟4：載入模型 → 重放資料集 → 回傳健康指標時間線（含已知 drift 標記供對照）。
 
+    max_windows：時間線最多窗數（None→自動：高維 p>64 取 40、否則 150）。超過則加大 step **降採樣**，
+    使高維資料集（如 uci p=128，逐窗 L4 permutation 昂貴）也能在互動時間內渲染，不卡 LOADING。
+
     Returns:
-        {product, window, points:[{start,end,health_index,raw_alarm,persisted_alarm,region,...}],
-         golden_range, drift_ranges}。region∈{golden,clean_reentry,drift,other}。
+        {product, window, points:[...], n_alarms, has_y_mapping, subsampled, n_windows}。
     """
     bundle = load(bundle_path)  # verify=True：指紋不符即拒載
     ds, gt = registry.build(name, **build_kwargs)
     src = FrameSource(ds.frame, list(gt.x_columns))
-    scores = run_replay(bundle, src, window=window, compute_fwer=compute_fwer, persistence_k=persistence_k)
+    n = len(ds.frame)
+    if max_windows is None:  # 高維逐窗評分昂貴 → 自動降採樣保互動（低維維持高解析）
+        max_windows = 40 if len(bundle.x_columns) > 64 else 150
+    full_windows = max(1, (n - window) // window + 1)
+    step = window
+    subsampled = False
+    if full_windows > max_windows:
+        step = max(window, n // max_windows)  # 加大 step → 非重疊抽樣，窗數受限
+        subsampled = True
+    scores = run_replay(bundle, src, window=window, step=step, compute_fwer=compute_fwer, persistence_k=persistence_k)
     gm = np.asarray(gt.golden_mask)
     dm = np.asarray(gt.drift_mask) if gt.drift_mask is not None else np.zeros(len(ds.frame), bool)
     grade = ds.frame[GRADE_LABEL].to_numpy() if GRADE_LABEL in ds.frame.columns else None
@@ -195,6 +207,8 @@ def score_timeline(
         "points": points,
         "n_alarms": int(sum(p["persisted_alarm"] for p in points)),
         "has_y_mapping": yh is not None,  # 前端據此決定是否畫 Ŷ vs Y 子圖
+        "subsampled": subsampled,         # 高維/長資料集降採樣顯示（前端標示）
+        "n_windows": len(points),
     }
 
 

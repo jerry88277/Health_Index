@@ -92,6 +92,27 @@ def test_alarm_is_superset_of_is_alarm_on_real_data():
     assert sum(al) >= sum(is_a)               # 聯集只增不減
 
 
+def test_score_single_pass_equivalent_to_methods():
+    """WHY（效能 dedup 正確性）：hi.score() 單次掃描須與逐一呼叫 subscores/health_index/hard_gates/alarm **等價**
+    （只是不重複算昂貴 L4）。若 score() 與個別方法偏離 → 本測試失敗（防 dedup 改錯語義）。"""
+    hi, Xg, d, gt, cols = _golden()
+    for X in (Xg[:60], d.frame[cols].to_numpy()[-60:]):
+        r = hi.score(X, compute_fwer=False)
+        assert abs(r["health_index"] - hi.health_index(X)) < 1e-9
+        assert r["hard_gates"] == hi.hard_gates(X)
+        assert r["is_alarm"] == hi.is_alarm(X)
+        assert r["alarm"] == hi.alarm(X, compute_fwer=False)
+
+
+def test_score_compute_fwer_equals_alarm():
+    """WHY：score(compute_fwer=True).alarm 等價 hi.alarm(compute_fwer=True)（is_alarm ∨ fwer）；附 p-value。"""
+    hi, Xg, d, gt, cols = _golden()
+    X = d.frame[cols].to_numpy()[-60:]
+    r = hi.score(X, compute_fwer=True)
+    assert r["alarm"] == hi.alarm(X, compute_fwer=True)
+    assert r["pvalues"] is None or set(r["pvalues"]) == {"L1", "L2", "L4"}
+
+
 def test_runner_raw_alarm_uses_alarm_method():
     """WHY（DRY 收口）：runner.poll_once 的 raw_alarm 須等於 bundle.health.alarm(X)——聯集邏輯只存在
     alarm() 一處。若 runner 重新自拼聯集而與 alarm() 偏離 → 本測試失敗。"""
