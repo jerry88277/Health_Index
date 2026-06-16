@@ -19,8 +19,10 @@ import plotly.graph_objects as go
 from dash import ALL, Dash, Input, Output, State, ctx, dcc, html, no_update
 
 from health_index.deploy import demo
+from health_index.deploy.events import IncidentStore
 
 _MODELS_DIR = os.path.join(tempfile.gettempdir(), "health_index_demo_models")
+_INCIDENTS = os.path.join(_MODELS_DIR, "incidents.json")  # 事件閉環持久化
 _ACCENT = "#4338ca"  # 單一品牌 accent（taste-skill：靛藍）
 _OK, _BAD, _CONF = "#16a34a", "#dc2626", "#1565c0"  # 語義狀態色：綠健康/紅告警/藍可信度
 _REGION_COLOR = {"golden": _OK, "clean_reentry": "#66bb6a", "drift": _BAD, "other": "#ef6c00"}
@@ -55,6 +57,7 @@ app.layout = html.Div(
         dcc.Store(id="wstep", data=1),
         dcc.Store(id="bundle-store"),
         dcc.Store(id="nrows", data=1500),
+        dcc.Store(id="events-refresh", data=0),
         html.Div(style={"display": "flex", "alignItems": "center", "justifyContent": "space-between",
                         "borderBottom": "1px solid #e3e8ef", "paddingBottom": "12px", "marginBottom": "16px"},
                  children=[
@@ -62,11 +65,14 @@ app.layout = html.Div(
                                "padding": "2px 8px", "marginRight": "8px", "fontWeight": 500}), "ProcessGuard ",
                                html.Span("製程健康監控", style={"color": "#51607a", "fontSize": "14px"})],
                               style={"fontWeight": 500, "fontSize": "17px"}),
-                     _btn("總覽", "nav-home"),
+                     html.Div([_btn("事件", "nav-events", style={"marginRight": "8px"}), _btn("總覽", "nav-home")]),
                  ]),
         html.Div(id="scr-home"),
         html.Div(id="scr-wizard", style={"display": "none"}),
         html.Div(id="scr-results", style={"display": "none"}),
+        html.Div(id="scr-events", style={"display": "none"}),
+        dcc.Download(id="dl-incidents"),
+        dcc.Download(id="dl-timeline"),
     ],
 )
 
@@ -88,11 +94,17 @@ _STATUS = {"healthy": ("● 健康", _OK), "alarm": ("● 告警", _BAD), "data_
            "unknown": ("○ 未知", "#888")}
 
 
-@app.callback(Output("home-metrics", "children"), Input("screen", "data"))
-def _home_metrics(screen):
-    ov = demo.monitoring_overview(_MODELS_DIR)  # 各模型當前健康（評最後一窗）
-    n_alarm = sum(1 for r in ov if r["status"] == "alarm")
+@app.callback(Output("home-metrics", "children"), Input("screen", "data"), Input("events-refresh", "data"))
+def _home_metrics(screen, _r):
+    pv = demo.plant_overview(_MODELS_DIR, incidents_path=_INCIDENTS)  # 全廠視圖 + 各裝置未結事件
+    ov = pv["assets"]
+    n_alarm = pv["n_alarm"]
     sources = demo.available_datasets()
+    pcol = {"alarm": _BAD, "healthy": _OK, "empty": "#888"}[pv["plant_status"]]
+    ptxt = {"alarm": "⚠ 有裝置告警", "healthy": "✅ 全廠健康", "empty": "尚無模型"}[pv["plant_status"]]
+    banner = html.Div(f"全廠狀態：{ptxt}　·　{pv['n_assets']} 裝置／{n_alarm} 告警中",
+                      style={"borderLeft": f"4px solid {pcol}", "background": "#f6f7f9", "padding": "10px 14px",
+                             "color": pcol, "fontWeight": 500, "marginBottom": "12px"})
     tiles = html.Div(style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "12px"}, children=[
         _tile("監控中模型", str(len(ov))),
         _tile("告警中", str(n_alarm)),
@@ -104,10 +116,12 @@ def _home_metrics(screen):
             txt, col = _STATUS.get(r["status"], _STATUS["unknown"])
             openable = r["status"] in ("healthy", "alarm")  # 可評分才可點進結果
             hp = f"健康度 {r['health']}" if r["health"] is not None else "（需該資料源才能評分）"
+            ai = r.get("active_incidents", 0)
             children = [
                 html.Div(r["product"], style={"fontWeight": 500}),
                 html.Div(txt, style={"color": col, "fontSize": "14px", "margin": "4px 0"}),
                 html.Div(hp, style={"color": "#51607a", "fontSize": "12px"}),
+                html.Div(f"未結事件 {ai}" if ai else "", style={"color": _BAD, "fontSize": "12px"}),
                 html.Div("點此查看 →" if openable else "—",
                          style={"color": _ACCENT if openable else "#bbb", "fontSize": "12px", "marginTop": "6px"}),
             ]
@@ -123,7 +137,7 @@ def _home_metrics(screen):
     else:
         body = html.Div("尚無模型。點右上「＋ 新建監控模型」開始，選一段正常時期當基準。",
                         style={"color": "#51607a", "background": "#f6f7f9", "padding": "14px", "borderRadius": "10px"})
-    return html.Div([tiles, html.Div(body, style={"marginTop": "14px"})])
+    return html.Div([banner, tiles, html.Div(body, style={"marginTop": "14px"})])
 
 
 def _tile(k, v, small=False):
@@ -196,24 +210,47 @@ def _results_view():
         dcc.Loading(dcc.Graph(id="ymap")),
         html.P("點選時間線上任一窗 → 下方顯示該窗超標的製程參數（GSI/T²/SPE、RBC 肇因、各層 p-value、Ŷ vs 實際 Y）。",
                style={"color": "#51607a", "fontSize": "13px"}),
+        _btn("匯出時間線 CSV", "btn-export-timeline"),
         dcc.Loading(html.Div(id="window-detail")),
     ]
 
 
-# 初始填入三屏內容（layout 完成後）
-app.layout.children[-3].children = _home_view()
-app.layout.children[-2].children = _wizard_view()
-app.layout.children[-1].children = _results_view()
+def _events_view():
+    return [
+        html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"}, children=[
+            html.Div([html.H2("事件", style={"margin": "0 0 4px", "fontWeight": 500}),
+                      html.Div("告警事件閉環：偵測 → 認領 → 關閉（含 MTTR、處置留痕）",
+                               style={"color": "#51607a", "fontSize": "14px"})]),
+            html.Div([_btn("匯出事件 CSV", "btn-export-incidents", style={"marginRight": "8px"}),
+                      _btn("← 回總覽", "btn-events-home")]),
+        ]),
+        html.Div(style={"margin": "10px 0"}, children=[
+            html.Label("關閉時的處置記錄：", style={"fontSize": "13px", "color": "#51607a"}),
+            dcc.Input(id="close-note", type="text", placeholder="例：調 FV-101 開度後恢復",
+                      style={"width": "360px", "marginLeft": "8px"}),
+            html.Span("（先填此欄，再按某事件的「關閉」）", style={"fontSize": "12px", "color": "#888", "marginLeft": "8px"}),
+        ]),
+        dcc.Loading(html.Div(id="events-body")),
+    ]
+
+
+# 初始填入各屏內容（依 id 對應，避免索引脆弱）
+_VIEWS = {"scr-home": _home_view, "scr-wizard": _wizard_view, "scr-results": _results_view, "scr-events": _events_view}
+for _child in app.layout.children:
+    if getattr(_child, "id", None) in _VIEWS:
+        _child.children = _VIEWS[_child.id]()
 
 
 # ---------- 路由與步進 ----------
 @app.callback(Output("screen", "data"),
               Input("nav-home", "n_clicks"), Input("btn-new", "n_clicks"),
               Input("go-results", "n_clicks"), Input("btn-results-home", "n_clicks"),
+              Input("nav-events", "n_clicks"), Input("btn-events-home", "n_clicks"),
               prevent_initial_call=True)
 def _route(*_):
     t = ctx.triggered_id
-    return {"nav-home": "home", "btn-results-home": "home", "btn-new": "wizard", "go-results": "results"}.get(t, no_update)
+    return {"nav-home": "home", "btn-results-home": "home", "btn-new": "wizard",
+            "go-results": "results", "nav-events": "events", "btn-events-home": "home"}.get(t, no_update)
 
 
 @app.callback(Output("bundle-store", "data", allow_duplicate=True), Output("screen", "data", allow_duplicate=True),
@@ -240,10 +277,11 @@ def _wstep(_n, _nx, _bk, cur):
 
 
 @app.callback(Output("scr-home", "style"), Output("scr-wizard", "style"), Output("scr-results", "style"),
-              Input("screen", "data"))
+              Output("scr-events", "style"), Input("screen", "data"))
 def _show_screen(screen):
     vis, hid = {"display": "block"}, {"display": "none"}
-    return (vis if screen == "home" else hid, vis if screen == "wizard" else hid, vis if screen == "results" else hid)
+    return (vis if screen == "home" else hid, vis if screen == "wizard" else hid,
+            vis if screen == "results" else hid, vis if screen == "events" else hid)
 
 
 @app.callback(Output("stepper", "children"), Output("wstep-left", "children"),
@@ -340,6 +378,17 @@ def _run(screen, bundle, name, window):
     except Exception as e:
         return html.Span(f"❌ 模擬失敗：{e}", style={"color": _BAD}), go.Figure(), go.Figure()
     pts = tl["points"]
+    # 增量5：持續告警 → 開事件（同裝置防重複；reuse 已算 pts，不重複評分）。最嚴重窗取 RBC 首位當肇因。
+    alarmed = [p for p in pts if p["persisted_alarm"]]
+    if alarmed:
+        worst = min(alarmed, key=lambda p: p["health_index"])
+        try:
+            dd = demo.window_detail(bundle["bundle_path"], name, worst["start"], worst["end"], compute_fwer=False)
+            top = dd["rbc_ranking"][0][0] if dd.get("rbc_ranking") else "(見窗下鑽)"
+        except Exception:
+            top = "(見窗下鑽)"
+        IncidentStore(_INCIDENTS).open_incident(product=name, window=[worst["start"], worst["end"]],
+            health=worst["health_index"], confidence=worst["confidence"], top_cause=top, detected_at=worst.get("ts"))
     xs = [p.get("ts") or p["start"] for p in pts]  # wall-clock（對齊 DCS/historian）；無時間戳退回樣本索引
     his = [p["health_index"] for p in pts]
     colors = [_REGION_COLOR[p["region"]] for p in pts]
@@ -443,6 +492,89 @@ def _detail(click, bundle, name, window):
         html.Div(ss_line, style={"marginTop": "6px", "color": _CONF}),
         html.Div(f"模型版本：{d['model_version']}", style={"color": "#888", "fontSize": "12px", "marginTop": "4px"}),
     ])
+
+
+_SEV_COL = {"critical": _BAD, "warning": "#b26a00", "info": "#51607a"}
+
+
+@app.callback(Output("events-body", "children"), Input("screen", "data"), Input("events-refresh", "data"))
+def _events_body(screen, _r):
+    if screen != "events":
+        return no_update
+    ov = demo.event_overview(_INCIDENTS)
+    st, roi, incs = ov["stats"], ov["roi"], ov["incidents"]
+    mttr = st["mean_mttr_hr"]
+    tiles = html.Div(style={"display": "grid", "gridTemplateColumns": "repeat(4,1fr)", "gap": "12px", "margin": "12px 0"},
+                     children=[_tile("未結 open", str(st["open"])), _tile("處理中 ack", str(st["ack"])),
+                               _tile("已關閉", str(st["closed"])), _tile("平均 MTTR(小時)", "—" if mttr is None else str(mttr))])
+    roi_card = _card([
+        html.Div("導入效益估算（情境假設，非實測損益）", style={"fontWeight": 500}),
+        html.Div(f"critical {roi['n_critical_events']} 件 → 假設避免 {roi['assumed_prevented_stops']} 次非計畫停車 → 估省 ${roi['est_savings']:,.0f}",
+                 style={"color": _OK, "margin": "4px 0"}),
+        html.Div(f"假設：每次停車損失 ${roi['assumptions']['avg_loss_per_unplanned_stop']:,.0f}、避免比例 "
+                 f"{roi['assumptions']['prevented_fraction']}。{roi['assumptions']['note']}",
+                 style={"fontSize": "12px", "color": "#888"}),
+    ], style={"margin": "10px 0"})
+    if not incs:
+        body = html.Div("尚無事件。在『查看健康指標』偵測到持續告警時自動開案。",
+                        style={"color": "#51607a", "background": "#f6f7f9", "padding": "14px", "borderRadius": "10px"})
+    else:
+        cards = []
+        for it in incs:
+            sev = _SEV_COL.get(it["severity"], "#51607a")
+            acts = []
+            if it["status"] == "open":
+                acts.append(_btn("認領 ACK", {"type": "ack-inc", "id": it["id"]}, style={"marginRight": "8px", "padding": "5px 12px"}))
+            if it["status"] in ("open", "ack"):
+                acts.append(_btn("關閉", {"type": "close-inc", "id": it["id"]}, primary=True, style={"padding": "5px 12px"}))
+            mttr_line = f"MTTR {it['mttr_sec'] / 3600:.2f} 小時｜處置：{it.get('close_note')}" if it.get("mttr_sec") else ""
+            cards.append(_card([
+                html.Div([html.Span(it["id"] + "　", style={"fontWeight": 500}),
+                          html.Span(it["severity"], style={"color": sev, "fontWeight": 500}),
+                          html.Span("　" + it["status"], style={"color": "#51607a"})]),
+                html.Div(f"{it['product']}｜肇因 {it['top_cause']}｜健康 {it['health']}｜可信 {it['confidence']}｜{it['detected_at']}",
+                         style={"fontSize": "13px", "color": "#51607a", "margin": "4px 0"}),
+                html.Div(mttr_line, style={"fontSize": "12px", "color": "#888"}),
+                html.Div(acts, style={"marginTop": "6px"}),
+            ], style={"margin": "8px 0"}))
+        body = html.Div(cards)
+    return html.Div([tiles, roi_card, body])
+
+
+@app.callback(Output("events-refresh", "data"),
+              Input({"type": "ack-inc", "id": ALL}, "n_clicks"), Input({"type": "close-inc", "id": ALL}, "n_clicks"),
+              State("close-note", "value"), State("events-refresh", "data"), prevent_initial_call=True)
+def _event_action(_a, _c, note, refresh):
+    if not ctx.triggered or not ctx.triggered[0].get("value"):
+        return no_update
+    t = ctx.triggered_id
+    if not isinstance(t, dict):
+        return no_update
+    store = IncidentStore(_INCIDENTS)
+    try:
+        if t["type"] == "ack-inc":
+            store.ack(t["id"], by="工程師")
+        else:
+            store.close(t["id"], note=note or "已處置", by="工程師")
+    except Exception:
+        return no_update
+    return (refresh or 0) + 1
+
+
+@app.callback(Output("dl-incidents", "data"), Input("btn-export-incidents", "n_clicks"), prevent_initial_call=True)
+def _dl_incidents(_n):
+    incs = demo.event_overview(_INCIDENTS)["incidents"]
+    return {"content": demo.incidents_to_csv(incs), "filename": "incidents.csv"}
+
+
+@app.callback(Output("dl-timeline", "data"), Input("btn-export-timeline", "n_clicks"),
+              State("bundle-store", "data"), prevent_initial_call=True)
+def _dl_timeline(_n, bundle):
+    if not bundle:
+        return no_update
+    name = bundle.get("product")
+    tl = demo.score_timeline(bundle["bundle_path"], name)
+    return {"content": demo.timeline_to_csv(tl["points"]), "filename": f"{name}_timeline.csv"}
 
 
 if __name__ == "__main__":

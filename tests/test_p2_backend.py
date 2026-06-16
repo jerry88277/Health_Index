@@ -32,6 +32,18 @@ def test_timeline_to_csv_has_header():
     assert "ts,start,end,region,health_index" in csv and "golden" in csv
 
 
+def test_ingest_incidents_and_event_overview(tmp_path):
+    """增量5：評分→persisted alarm 開成事件（防重複）；event_overview 給清單+stats(MTTR)+ROI。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    store = str(tmp_path / "inc.json")
+    r = demo.ingest_incidents(m["bundle_path"], "synthetic", store, window=60, seed=5, drift_strength=1.2)
+    assert r["opened"] is True and r["incident_id"]
+    demo.ingest_incidents(m["bundle_path"], "synthetic", store, window=60, seed=5, drift_strength=1.2)  # 再掃
+    ov = demo.event_overview(store)
+    assert ov["stats"]["active"] == 1            # 同裝置防重複，仍只 1 件 active
+    assert len(ov["incidents"]) == 1 and "roi" in ov and "stats" in ov
+
+
 def test_estimate_roi_is_assumption_driven():
     """ROI＝情境假設估算：savings = n_critical × prevented_fraction × loss；assumptions 必透明（誠實標）。"""
     inc = [{"severity": "critical"}, {"severity": "critical"}, {"severity": "warning"}]

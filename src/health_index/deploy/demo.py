@@ -23,6 +23,7 @@ from .acceptance import acceptance_from_dataset
 from .alarms import build_alarm_event
 from .bundle import build_bundle, load, save
 from .events import IncidentStore
+from .roi import estimate_roi
 from .runner import WindowScore, run_replay
 from .sources import FrameSource
 
@@ -360,6 +361,36 @@ def monitoring_overview(models_dir: str = "models", *, window: int = 60) -> list
             rec["status"] = "data_unavailable"
         out.append(rec)
     return out
+
+
+def ingest_incidents(bundle_path: str, name: str, store_path: str, *, window: int = 60, **build_kwargs) -> dict:
+    """增量5：把評分發現的 persisted-alarm 開成**事件**（同裝置防重複）。回傳 {opened, incident_id}。
+
+    取最嚴重（health 最低）的持續告警窗開案；top_cause 取該窗 RBC 首位（一次 window_detail）。供事件閉環。
+    """
+    tl = score_timeline(bundle_path, name, window=window, **build_kwargs)
+    store = IncidentStore(store_path)
+    alarmed = [p for p in tl["points"] if p["persisted_alarm"]]
+    if not alarmed:
+        return {"opened": False, "incident_id": None}
+    worst = min(alarmed, key=lambda p: p["health_index"])
+    try:
+        d = window_detail(bundle_path, name, worst["start"], worst["end"], compute_fwer=False, **build_kwargs)
+        top = d["rbc_ranking"][0][0] if d.get("rbc_ranking") else "(見窗下鑽)"
+    except Exception:
+        top = "(見窗下鑽)"
+    inc = store.open_incident(product=tl["product"], window=[worst["start"], worst["end"]],
+                              health=worst["health_index"], confidence=worst["confidence"],
+                              top_cause=top, detected_at=worst.get("ts"))
+    return {"opened": True, "incident_id": inc.id}
+
+
+def event_overview(store_path: str, *, avg_loss_per_unplanned_stop: float = 1_000_000.0) -> dict:
+    """事件頁資料（現場工程師閉環 + 處長 KPI/ROI）：事件清單 + stats(含 MTTR) + ROI 估算。"""
+    store = IncidentStore(store_path)
+    incs = store.list()
+    return {"incidents": incs, "stats": store.stats(),
+            "roi": estimate_roi(incs, avg_loss_per_unplanned_stop=avg_loss_per_unplanned_stop)}
 
 
 def plant_overview(models_dir: str = "models", *, incidents_path: str | None = None, window: int = 60) -> dict:
