@@ -381,11 +381,12 @@ def _golden_readout(v):
 # ---------- 建模 ----------
 @app.callback(Output("bundle-store", "data"), Output("build-result", "children"),
               Input("btn-build", "n_clicks"), State("dataset", "value"), State("golden-range", "value"),
-              prevent_initial_call=True)
-def _build(_n, name, grange):
+              State("window", "value"), prevent_initial_call=True)
+def _build(_n, name, grange, window):
     try:
         # 先驗收（gate）：FAIL → 不存檔（不落地），修複審揪出的「先 save 後驗收、FAIL 仍落地」治理漏洞。
-        acc = demo.acceptance_summary(name, window=60)
+        # 對齊使用者選的 window（修複審揪出的寫死 window=60 脫鉤）。
+        acc = demo.acceptance_summary(name, window=int(window or 60))
         recall_txt = (f"、事故 recall {acc['drift_recall']}" if acc.get("drift_recall") is not None else "")
         if acc.get("available") and not acc["passed"]:
             return no_update, html.Div([
@@ -404,6 +405,8 @@ def _build(_n, name, grange):
                 html.Div(f"hold-out golden 誤報率 {acc['holdout_golden_fpr']}"
                          f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{recall_txt}",
                          style={"fontSize": "13px", "color": "#51607a"}),
+                html.Div("（驗收採資料集標準時間連續 hold-out；正式上線應對實際 golden 範圍驗收）",
+                         style={"fontSize": "12px", "color": "#888"}),
             ])
         else:
             acc_line = html.Div(f"（驗收未跑：{acc.get('error', '資料不足')}）", style={"fontSize": "13px", "color": "#888"})
@@ -462,7 +465,8 @@ def _run(screen, bundle, name, window):
     if alarmed:
         worst = min(alarmed, key=lambda p: p["health_index"])
         try:
-            dd = demo.window_detail(bundle["bundle_path"], name, worst["start"], worst["end"], compute_fwer=False)
+            dd = demo.window_detail(bundle["bundle_path"], name, worst["start"], worst["end"], compute_fwer=False,
+                                    tag_map=demo.tag_map_for(_MODELS_DIR, name))  # 事件肇因也顯 DCS 位號（紅隊現場工程師）
             top = dd["rbc_ranking"][0][0] if dd.get("rbc_ranking") else "(見窗下鑽)"
         except Exception:
             top = "(見窗下鑽)"
@@ -552,10 +556,13 @@ def _detail(click, role, bundle, name, window):
     sop = (f"建議動作：現場確認「{top_var}」相關設備，必要時依 SOP 通報工程師（分機填於 SOP）。"
            if d["alarm"] else "建議動作：維持監看，無需處置。")  # 一行白話 SOP（作業員）
     if role == "operator":  # 作業員視圖：只給紅綠/可信/源頭/動作，藏 GSI/T²/SPE/p-value/Ŷ 等術語（漸進揭露）
+        op_reason = {"bad": "警報可信，請依下方動作處理。",
+                     "warn": "警報可信度偏低，先觀察、別急著動手，必要時通報工程師。",
+                     "ok": "目前正常，維持監看。"}.get(v.get("tone"), "")  # 白話，不複用工程師術語 reason
         return _card([
             html.H5(f"窗 [{start}:{end}]　{'⚠ 異常' if d['alarm'] else '✅ 正常'}", style={"margin": "0 0 8px"}),
             html.Div([html.Span(v.get("label", ""), style={"fontWeight": 500, "fontSize": "16px"}),
-                      html.Div("　" + v.get("reason", ""), style={"marginTop": "2px"}),
+                      html.Div("　" + op_reason, style={"marginTop": "2px"}),
                       html.Div(sop, style={"marginTop": "6px", "fontWeight": 500})],
                      style={"background": "#f6f7f9", "borderLeft": f"5px solid {vcol}", "padding": "10px 14px",
                             "color": vcol, "marginBottom": "8px"}),
