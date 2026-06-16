@@ -43,13 +43,13 @@
 
 - **監控產品 UI**（已出可點擊互動原型）：採 design-advisor。三屏＝總覽 → 新建精靈 → 結果下鑽，對應 Shneiderman 真言（overview → zoom → details-on-demand）+ Hick（首頁 2 主決策）+ 漸進揭露（細節指標藏下鑽）。
 - **通用反-slop（產品 UI 也採用 taste-skill 的可移植硬規則）**：em-dash 禁用（改用 `·`／`、`／`→`）；**語義色 vs accent 分離**——綠=健康、紅=告警為**固定語義狀態色**（不可亂改），藍=可信度與測試段，附 legend；字體紀律、單一品牌強調色。
-- **銷售 pitch / landing 頁**（待做）：走 taste-skill 全套（Design Read + dials + 87 項 pre-flight）。缺口：目前原型只有產品 UI，尚缺「決策者前 5 秒看到痛點與價值主張」的 hero 首屏。
+- **銷售 pitch / landing 頁**：**不做**（使用者 2026-06-16 決定，直接展示系統前端）。taste-skill 規則（§3）保留為**參考知識**，日後若需行銷頁再啟用；曾建之 `frontend/landing.html` 已移除。
 
-### design-advisor 對現有原型的自審（affirm → 1-3 問題 → 改法）
+### design-advisor 對產品 UI 的自審（affirm → 問題 → 改法）
 - **肯定**：狀態優先（紅綠燈）、漸進揭露、克制配色、敘事清楚（黃金健康 → 後段隱性飄移告警）。
-- **問題 1**：混用「賣點頁」與「產品頁」→ 缺銷售 hero 首屏。**改**：總覽前加一張價值主張頁（一句痛點 + 「單變數 SPC 看不到的隱性飄移，我們提早抓到」+ demo CTA），因為 buyer 前 5 秒要「解決我什麼痛」。
-- **問題 2**：多色未宣告語義 → taste-skill「單一 accent」會 flag。**改**：明確分「語義狀態色（綠/紅固定）」vs「單一品牌 accent（藍）」+ legend。
-- **問題 3**：結果頁第一眼密度偏高（VISUAL_DENSITY）。**改**：第一眼先給「健康時間線 + 紅窗」，RBC/Ŷ 保持點擊揭露（現況已是），demo 時口頭引導。
-- **裁決**：產品 UI 原型「方向可上線」；銷售 hero 首屏「尚缺、需補」。
+- ~~問題 1（混用賣點頁/產品頁、缺 hero）~~：**作廢**——使用者決定不做銷售頁，直接展示產品 UI，入口即監控總覽。
+- **問題 2（已修）**：色彩語義已宣告——綠/紅為固定語義狀態色、藍=可信度，單一品牌 accent 靛藍，附 legend。
+- **問題 3（已修）**：結果頁第一眼先給健康時間線 + 紅窗，RBC/Ŷ 保持點擊揭露。
+- **裁決**：產品 UI 三屏「方向可上線」；視覺/點擊待本機渲染驗證（NOT VERIFIED-visual）。
 
 > 後端 `deploy/demo.py`（`score_timeline`/`window_detail`）已能真算原型所有數字（health/confidence/RBC/Ŷ-vs-Y），接上即真。

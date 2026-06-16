@@ -2,7 +2,7 @@
 
 依 docs/frontend_design_guide.md（design-advisor）：三屏對應 Shneiderman overview→zoom→details。
 瓶子優先：公開資料集線上模擬，PI 為 stub。本檔為**呈現殼**——所有邏輯在已單元測試的
-``health_index.deploy.demo``；UI 不含演算法。銷售 hero 頁見 frontend/landing.html（CTA 連向本頁）。
+``health_index.deploy.demo``；UI 不含演算法。直接展示系統前端（無銷售頁，使用者 2026-06-16 定）。
 
 啟動：``PYTHONPATH=src python frontend/demo_app.py``，開 http://127.0.0.1:8051
 注意：UI 視覺/點擊未在本環境渲染驗證（NOT VERIFIED-visual）；callback 邏輯由 tests/test_demo.py + 直呼驗證。
