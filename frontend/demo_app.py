@@ -63,6 +63,7 @@ app.layout = html.Div(
         dcc.Store(id="bundle-store"),
         dcc.Store(id="nrows", data=1500),
         dcc.Store(id="events-refresh", data=0),
+        dcc.Store(id="tl-store"),  # 時間線 points（供門檻 slider 重繪，不重新評分）
         dcc.Interval(id="tick", interval=60000, n_intervals=0),  # 自動刷新（60s）——盤面不需手動戳
         html.Div(style={"display": "flex", "alignItems": "center", "justifyContent": "space-between",
                         "borderBottom": "1px solid #e3e8ef", "paddingBottom": "12px", "marginBottom": "16px"},
@@ -211,6 +212,14 @@ def _results_view():
         ]),
         _LEGEND,
         dcc.Loading(html.Div(id="run-status", style={"margin": "8px 0", "fontSize": "18px", "fontWeight": 500})),
+        html.Div(style={"display": "flex", "alignItems": "center", "gap": "10px", "margin": "4px 0"}, children=[
+            html.Span("告警門檻試算：", style={"fontSize": "13px", "color": "#51607a", "whiteSpace": "nowrap"}),
+            html.Div(style={"flex": "1"}, children=[
+                dcc.Slider(id="hi-thr", min=0.3, max=0.9, step=0.05, value=0.6,
+                           marks={0.3: "0.3", 0.6: "0.6", 0.9: "0.9"}, tooltip={"placement": "bottom"},
+                           updatemode="mouseup")]),
+        ]),
+        html.Div(id="thr-readout", style={"fontSize": "13px", "color": "#51607a", "marginBottom": "4px"}),
         dcc.Loading(dcc.Graph(id="timeline")),
         dcc.Loading(dcc.Graph(id="ymap")),
         html.P("點選時間線上任一窗 → 下方顯示該窗超標的製程參數（GSI/T²/SPE、RBC 肇因、各層 p-value、Ŷ vs 實際 Y）。",
@@ -382,20 +391,43 @@ def _build(_n, name, grange):
         return no_update, html.Span(f"❌ 建模失敗：{e}", style={"color": _BAD})
 
 
+def _timeline_fig(pts, threshold):
+    """健康時間線圖（共用：_run 初繪 + 門檻 slider 重繪）。threshold 控制門檻線位置（what-if）。"""
+    xs = [p.get("ts") or p["start"] for p in pts]
+    colors = [_REGION_COLOR[p["region"]] for p in pts]
+    custom = [[p["spe_mean"], p["gsi_mean"], _REGION_ZH[p["region"]], p["start"]] for p in pts]  # 末位 start 供下鑽
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=xs, y=[p["health_index"] for p in pts], mode="lines+markers",
+                  marker={"color": colors, "size": 9}, line={"color": "#999"}, name="健康指標", customdata=custom,
+                  hovertemplate="時間 %{x}<br>健康度 %{y:.3f}<br>SPE %{customdata[0]}　GSI %{customdata[1]}<br>%{customdata[2]}<extra></extra>"))
+    fig.add_trace(go.Scatter(x=xs, y=[p["confidence"] for p in pts], mode="lines",
+                  line={"color": _CONF, "dash": "dot"}, name="可信度",
+                  hovertemplate="時間 %{x}<br>可信度 %{y:.3f}<extra></extra>"))
+    al = [(p.get("ts") or p["start"], p["health_index"], p["start"]) for p in pts if p["persisted_alarm"]]
+    if al:
+        fig.add_trace(go.Scatter(x=[a[0] for a in al], y=[a[1] for a in al], mode="markers",
+                      marker={"symbol": "x", "color": _BAD, "size": 14}, name="告警", customdata=[[a[2]] for a in al]))
+    fig.add_hline(y=threshold, line_dash="dash", line_color="#888", annotation_text=f"門檻 {threshold}")
+    fig.update_layout(yaxis={"title": "健康指標 (1=健康)", "range": [0, 1.05]},
+                      xaxis={"title": "時間"}, height=420, legend={"orientation": "h"})
+    return fig
+
+
 # ---------- 結果（進入 results 屏時評分）----------
 @app.callback(Output("run-status", "children"), Output("timeline", "figure"), Output("ymap", "figure"),
+              Output("tl-store", "data"),
               Input("screen", "data"), State("bundle-store", "data"), State("dataset", "value"),
               State("window", "value"), prevent_initial_call=True)
 def _run(screen, bundle, name, window):
     if screen != "results":
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
     if not bundle:
-        return html.Span("⚠ 請先建立模型", style={"color": "#ef6c00"}), go.Figure(), go.Figure()
+        return html.Span("⚠ 請先建立模型", style={"color": "#ef6c00"}), go.Figure(), go.Figure(), no_update
     name = bundle.get("product") or name  # 從總覽開啟既有模型時，資料源＝該模型 product（非 dropdown）
     try:
         tl = demo.score_timeline(bundle["bundle_path"], name, window=int(window or 60))
     except Exception as e:
-        return html.Span(f"❌ 模擬失敗：{e}", style={"color": _BAD}), go.Figure(), go.Figure()
+        return html.Span(f"❌ 模擬失敗：{e}", style={"color": _BAD}), go.Figure(), go.Figure(), no_update
     pts = tl["points"]
     # 增量5：持續告警 → 開事件（同裝置防重複；reuse 已算 pts，不重複評分）。最嚴重窗取 RBC 首位當肇因。
     alarmed = [p for p in pts if p["persisted_alarm"]]
@@ -408,26 +440,8 @@ def _run(screen, bundle, name, window):
             top = "(見窗下鑽)"
         IncidentStore(_INCIDENTS).open_incident(product=name, window=[worst["start"], worst["end"]],
             health=worst["health_index"], confidence=worst["confidence"], top_cause=top, detected_at=worst.get("ts"))
-    xs = [p.get("ts") or p["start"] for p in pts]  # wall-clock（對齊 DCS/historian）；無時間戳退回樣本索引
-    his = [p["health_index"] for p in pts]
-    colors = [_REGION_COLOR[p["region"]] for p in pts]
-    # customdata 末位帶窗 start（時間軸改 wall-clock 後，_detail 不能再用 x 反推索引）
-    custom = [[p["spe_mean"], p["gsi_mean"], _REGION_ZH[p["region"]], p["start"]] for p in pts]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=xs, y=his, mode="lines+markers", marker={"color": colors, "size": 9},
-                  line={"color": "#999"}, name="健康指標", customdata=custom,
-                  hovertemplate="時間 %{x}<br>健康度 %{y:.3f}<br>SPE %{customdata[0]}　GSI %{customdata[1]}<br>%{customdata[2]}<extra></extra>"))
-    fig.add_trace(go.Scatter(x=xs, y=[p["confidence"] for p in pts], mode="lines",
-                  line={"color": _CONF, "dash": "dot"}, name="可信度",
-                  hovertemplate="時間 %{x}<br>可信度 %{y:.3f}<extra></extra>"))
-    al = [(p.get("ts") or p["start"], p["health_index"], p["start"]) for p in pts if p["persisted_alarm"]]
-    if al:
-        fig.add_trace(go.Scatter(x=[a[0] for a in al], y=[a[1] for a in al], mode="markers",
-                      marker={"symbol": "x", "color": _BAD, "size": 14}, name="告警",
-                      customdata=[[a[2]] for a in al]))
-    fig.add_hline(y=0.6, line_dash="dash", line_color="#888", annotation_text="告警門檻 0.6")
-    fig.update_layout(yaxis={"title": "健康指標 (1=健康)", "range": [0, 1.05]},
-                      xaxis={"title": "時間"}, height=420, legend={"orientation": "h"})
+    xs = [p.get("ts") or p["start"] for p in pts]  # wall-clock（對齊 DCS/historian）；ymap 也用
+    fig = _timeline_fig(pts, 0.6)
     ymap = go.Figure()
     if tl.get("has_y_mapping"):
         yhat = [p.get("yhat_mean") for p in pts]
@@ -454,7 +468,17 @@ def _run(screen, bundle, name, window):
     note = (f"　·　高維/長資料集已降採樣為 {tl['n_windows']} 窗顯示" if tl.get("subsampled") else "")
     status = html.Span([html.Span(msg, style={"color": _BAD if n_alarm else _OK}),
                         html.Span(note, style={"color": "#888", "fontSize": "13px", "fontWeight": 400})])
-    return status, fig, ymap
+    return status, fig, ymap, pts
+
+
+@app.callback(Output("timeline", "figure", allow_duplicate=True), Output("thr-readout", "children"),
+              Input("hi-thr", "value"), State("tl-store", "data"), prevent_initial_call=True)
+def _recolor(thr, pts):
+    """門檻 what-if：移動門檻線 + 算「此門檻下幾窗低於門檻」，不重新評分、不改模型實際告警（製程工程師調靈敏度）。"""
+    if not pts:
+        return no_update, ""
+    n = sum(1 for p in pts if p["health_index"] < thr)
+    return _timeline_fig(pts, thr), f"門檻 {thr} 試算：{n}/{len(pts)} 窗低於門檻（what-if，不改模型實際告警）"
 
 
 @app.callback(Output("window-detail", "children"), Input("timeline", "clickData"),
