@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProcessGuard · 製程健康監控</title>
+<style>
+  :root{
+    --bg:#ffffff; --bg2:#f6f7f9; --ink:#0f172a; --muted:#51607a; --line:#e3e8ef;
+    --accent:#4338ca; --accent-tint:#eef2ff; --ok:#16a34a; --ok-tint:#ecfdf3; --bad:#dc2626; --bad-tint:#fef2f2;
+    --r:14px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:-apple-system,"Segoe UI",Inter,system-ui,"Noto Sans TC",sans-serif;color:var(--ink);background:var(--bg);line-height:1.7;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+  a{color:inherit;text-decoration:none}
+  .btn{display:inline-block;padding:12px 22px;border-radius:10px;font-weight:500;font-size:15px;white-space:nowrap;border:1px solid var(--accent);transition:.15s}
+  .btn-solid{background:var(--accent);color:#fff}
+  .btn-solid:hover{background:#3730a3}
+  .btn-ghost{background:transparent;color:var(--accent)}
+  .btn-ghost:hover{background:var(--accent-tint)}
+  nav{position:sticky;top:0;background:rgba(255,255,255,.9);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);z-index:10}
+  nav .wrap{display:flex;align-items:center;justify-content:space-between;height:62px}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:500;font-size:17px}
+  .brand .mk{width:26px;height:26px;border-radius:7px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px}
+  .eyebrow{display:inline-block;font-size:13px;letter-spacing:.04em;color:var(--accent);background:var(--accent-tint);padding:5px 12px;border-radius:999px;margin-bottom:20px}
+  h1{font-size:46px;line-height:1.18;font-weight:500;margin:0 0 18px;letter-spacing:-.01em}
+  h2{font-size:30px;font-weight:500;margin:0 0 12px;letter-spacing:-.01em}
+  h3{font-size:18px;font-weight:500;margin:0 0 6px}
+  .lede{font-size:19px;color:var(--muted);max-width:640px;margin:0 0 30px}
+  section{padding:84px 0;border-bottom:1px solid var(--line)}
+  .hero{padding:96px 0 88px}
+  .ctas{display:flex;gap:12px;flex-wrap:wrap}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+  .card{background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:24px}
+  .card .ic{width:38px;height:38px;border-radius:9px;background:var(--accent-tint);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:14px}
+  .alt{background:var(--bg2)}
+  .muted{color:var(--muted)}
+  .evrow{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:center;margin-top:34px}
+  .stat{display:flex;align-items:baseline;gap:10px;padding:14px 0;border-bottom:1px solid var(--line)}
+  .stat .k{font-size:14px;color:var(--muted);flex:1}
+  .stat .v{font-size:22px;font-weight:500}
+  .pill{font-size:13px;padding:3px 10px;border-radius:8px;font-weight:500}
+  .pill-ok{background:var(--ok-tint);color:var(--ok)}
+  .pill-bad{background:var(--bad-tint);color:var(--bad)}
+  .quote{font-size:21px;line-height:1.5;max-width:680px}
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:38px;counter-reset:s}
+  .step{position:relative;padding:22px;background:var(--bg);border:1px solid var(--line);border-radius:var(--r)}
+  .step::before{counter-increment:s;content:counter(s);display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:var(--accent);color:#fff;font-weight:500;margin-bottom:12px}
+  .reveal{opacity:0;transform:translateY(14px);transition:.6s ease}
+  .reveal.in{opacity:1;transform:none}
+  footer{padding:40px 0;color:var(--muted);font-size:14px}
+  @media(max-width:760px){h1{font-size:34px}.grid3,.steps,.evrow{grid-template-columns:1fr}section{padding:56px 0}}
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <div class="brand"><span class="mk">P</span>ProcessGuard</div>
+  <a class="btn btn-solid" href="http://127.0.0.1:8051">看線上 Demo</a>
+</div></nav>
+
+<header class="hero"><div class="wrap reveal">
+  <span class="eyebrow">製程健康監控 · 取自 AVM 自動虛擬量測精神</span>
+  <h1>在單變數管制圖看到之前，<br>搶先抓到隱性飄移</h1>
+  <p class="lede">換線、維修後回頭跑同一產品，每顆感測器都還在規格內，多變量關係卻已偷偷偏移。ProcessGuard 以黃金期建模、即時比對，提早告警並指到該查哪個參數。</p>
+  <div class="ctas">
+    <a class="btn btn-solid" href="http://127.0.0.1:8051">看線上 Demo</a>
+    <a class="btn btn-ghost" href="#how">了解運作方式</a>
+  </div>
+</div></header>
+
+<section><div class="wrap reveal">
+  <h2>單變數正常，不代表製程沒變</h2>
+  <p class="lede">傳統管制圖一次只看一個感測器。但真正的風險常是「每個值都在規格內、彼此關係卻斷了」。這種隱性多變量飄移，單變數 SPC 看不到。</p>
+  <div class="grid3">
+    <div class="card"><div class="ic">↗</div><h3>早於單變數 SPC</h3><p class="muted">多變量殘差（SPE）在每個感測器越界之前就升起，提早預警。</p></div>
+    <div class="card"><div class="ic">◎</div><h3>附帶可信度</h3><p class="muted">每次判讀同時給「該信多少」，分辨真告警與模型外推。</p></div>
+    <div class="card"><div class="ic">⌖</div><h3>指到肇因參數</h3><p class="muted">RBC 肇因排行 + 軟測量 Ŷ vs 實際 Y，直接告訴你去查哪裡。</p></div>
+  </div>
+</div></section>
+
+<section class="alt"><div class="wrap reveal">
+  <h2>在真實、非化工資料上驗證</h2>
+  <p class="lede">不是只在合成資料漂亮。在公開的發電廠（CCPP）與鋼廠（Steel）真實連續資料上，注入隱性飄移後：</p>
+  <div class="evrow">
+    <div>
+      <div class="stat"><span class="k">每變數 3σ 越限率（看似正常）</span><span class="v pill pill-ok">≈ 0.6%</span></div>
+      <div class="stat"><span class="k">多變量 SPE 越限率（被抓到）</span><span class="v pill pill-bad">30 – 46%</span></div>
+      <div class="stat"><span class="k">健康指標</span><span class="v">0.94 → 0.47</span></div>
+    </div>
+    <blockquote class="quote">「每個變數都在規格內，卻被我們抓到。」這正是單變數管制圖做不到的事。</blockquote>
+  </div>
+</div></section>
+
+<section id="how"><div class="wrap reveal">
+  <h2>四步上線</h2>
+  <p class="lede">工程師自己就能建模型，不需資料科學團隊。</p>
+  <div class="steps">
+    <div class="step"><h3>選黃金期</h3><p class="muted">在時間軸圈一段製程穩定、代表正常的時期。</p></div>
+    <div class="step"><h3>建模 + 驗收</h3><p class="muted">自動建模，給「可上線 / 不可上線」裁決。</p></div>
+    <div class="step"><h3>即時監控</h3><p class="muted">以產線節拍輪詢，被動接收軟量測後分析。</p></div>
+    <div class="step"><h3>告警下鑽</h3><p class="muted">紅綠燈同步操作員與工程師，點開看肇因參數。</p></div>
+  </div>
+</div></section>
+
+<section class="alt"><div class="wrap reveal" style="text-align:center">
+  <h2>把隱性風險，變成你看得見的紅綠燈</h2>
+  <p class="lede" style="margin:0 auto 28px">用公開資料集走一遍完整流程：選資料範圍 → 建立模型 → 確認模擬資料 → 查看健康指標。</p>
+  <div class="ctas" style="justify-content:center">
+    <a class="btn btn-solid" href="http://127.0.0.1:8051">看線上 Demo</a>
+    <a class="btn btn-ghost" href="mailto:contact@example.com">預約導入評估</a>
+  </div>
+</div></section>
+
+<footer><div class="wrap">ProcessGuard · 製程健康監控 · 取自成大鄭芳田教授 AVM 自動虛擬量測精神</div></footer>
+
+<script>
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.12});
+  document.querySelectorAll('.reveal').forEach(function(el){io.observe(el)});
+</script>
+</body>
+</html>
