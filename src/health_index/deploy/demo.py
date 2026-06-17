@@ -56,6 +56,92 @@ def dataset_overview(name: str, **build_kwargs) -> dict:
     }
 
 
+def dataset_preview(name: str, *, max_points: int = 500, **build_kwargs) -> dict:
+    """步驟2 視覺化：資料的「標準化偏離度」時間線（每列 z-score 後的 RMS，越高＝越偏離全域平均）+ campaign
+    分段 + 真值 golden 建議。供前端畫預覽圖讓使用者「看著選 golden」（非健康指標，僅選段輔助）。
+
+    長資料集降採樣為 ≤max_points 個分箱均值（保互動）。確定性，無模型 fit（golden 尚未選，避免雞生蛋）。
+    """
+    ds, gt = registry.build(name, **build_kwargs)
+    fr = ds.frame
+    cols = list(gt.x_columns)
+    X = fr[cols].to_numpy(dtype=float)
+    mu = np.nanmean(X, axis=0)
+    sd = np.nanstd(X, axis=0)
+    sd[sd == 0] = 1.0
+    z = (X - mu) / sd
+    dev = np.sqrt(np.nanmean(z * z, axis=1))  # 每列偏離度（sigma 單位 RMS）；揭露暫態/位移
+    n = len(dev)
+    if n > max_points:  # 分箱均值降採樣
+        edges = np.linspace(0, n, max_points + 1).astype(int)
+        xs, vs = [], []
+        for b in range(max_points):
+            s, e = int(edges[b]), int(edges[b + 1])
+            if e > s:
+                xs.append((s + e) // 2)
+                vs.append(round(float(np.nanmean(dev[s:e])), 3))
+    else:
+        xs = list(range(n))
+        vs = [round(float(v), 3) for v in dev]
+    ts_col = fr[TIMESTAMP] if TIMESTAMP in fr.columns else None
+    xt = [str(ts_col.iloc[i]) for i in xs] if ts_col is not None else None
+    gm = np.asarray(gt.golden_mask)
+    gidx = np.flatnonzero(gm)
+    segs = [{"id": s.id, "start": s.start, "end": s.end, "label": s.label} for s in gt.segments]
+    return {
+        "name": name, "n_rows": n, "series_x": xs, "series_v": vs, "series_t": xt,
+        "segments": segs, "golden_suggested": [int(gidx[0]), int(gidx[-1] + 1)] if gidx.size else None,
+    }
+
+
+def golden_arg_from_spec(name: str, spec, **build_kwargs):
+    """UI golden 規格 → ``build_and_save_model`` 接受的引數（接出後端 _resolve_golden 既有能力）。
+
+    spec：``"auto"`` | ``(s,e)``/``[s,e]`` | ``{"range":[s,e]}`` | ``{"segments":[seg_id,...]}``（多段/非連續）。
+    """
+    if spec == "auto":
+        return "auto"
+    if isinstance(spec, dict) and "segments" in spec:
+        ds, gt = registry.build(name, **build_kwargs)
+        n = len(ds.frame)
+        mask = np.zeros(n, dtype=bool)
+        by_id = {s.id: s for s in gt.segments}
+        for sid in spec["segments"]:
+            seg = by_id.get(int(sid))
+            if seg is not None:
+                mask[seg.start : seg.end] = True
+        if not mask.any():
+            raise ValueError("未勾選任何有效 campaign 作為 golden")
+        return mask
+    if isinstance(spec, dict) and "range" in spec:
+        return (int(spec["range"][0]), int(spec["range"][1]))
+    if isinstance(spec, (list, tuple)) and len(spec) == 2:
+        return (int(spec[0]), int(spec[1]))
+    raise ValueError(f"非法 golden 規格: {spec!r}")
+
+
+def resolve_golden_runs(name: str, spec, **build_kwargs) -> dict:
+    """把 golden 規格解析為連續區間 runs（供前端預覽疊圖）+ 選取樣本數。auto 走變點切段。"""
+    from ..adapters.dataframe import _resolve_golden
+
+    arg = golden_arg_from_spec(name, spec, **build_kwargs)
+    ds, gt = registry.build(name, **build_kwargs)
+    n = len(ds.frame)
+    x_arr = ds.frame[list(gt.x_columns)].to_numpy(dtype=float)
+    m = np.asarray(_resolve_golden(arg, n, x_arr=x_arr, config=DEFAULT))
+    runs, i = [], 0
+    while i < n:
+        if m[i]:
+            j = i
+            while j < n and m[j]:
+                j += 1
+            runs.append([int(i), int(j)])
+            i = j
+        else:
+            i += 1
+    return {"runs": runs, "n_selected": int(m.sum())}
+
+
 def build_and_save_model(
     name: str,
     *,
@@ -491,17 +577,19 @@ def build_model_for_process(registry_path: str, models_dir: str, process_id: str
     """為製程建立/更換模型（重建基準）：先驗收 gate（FAIL 不存檔不登錄）→ 存版本化 bundle → 登錄 registry。
 
     更換模型＝同製程再呼一次（version 單調+1、舊版自動成歷史、current 指新版）。acceptance 快照存入 model record
-    供歷史頁判 rollback（紅隊 RT-3）。回傳 {saved, acceptance, model?, build?}。
+    供歷史頁判 rollback（紅隊 RT-3）。golden 可為 (s,e) / "auto" / {"segments":[...]}（接出 mask/auto 選法）。
+    回傳 {saved, acceptance, model?, build?}。
     """
     store = AssetStore(registry_path)
     p = store.get_process(process_id)
     dataset = p["dataset"]
+    garg = golden_arg_from_spec(dataset, golden)  # spec → build 引數（連續/勾選 mask/自動）
     version = int(p["next_version"])  # peek：build_and_save_model 不動 registry，record_build 會給同號（下方 assert）
     acc = acceptance_summary(dataset, holdout_frac=holdout_frac, window=int(window))
     if acc.get("available") and not acc["passed"]:  # FAIL 物理擋存檔（治理）
         return {"saved": False, "acceptance": acc, "process_id": process_id}
     stem = f"{process_id}__v{version}"
-    m = build_and_save_model(dataset, golden=golden, models_dir=models_dir, created_at=at, product=stem)
+    m = build_and_save_model(dataset, golden=garg, models_dir=models_dir, created_at=at, product=stem)
     rec = store.record_build(process_id, path=f"{stem}.joblib", dataset=dataset, golden_range=m["golden_range"],
                              fingerprint_hi=m["fingerprint_hi"], has_y_health=m["has_y_health"],
                              acceptance=acc if acc.get("available") else None, by=by, at=at)

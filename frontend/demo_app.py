@@ -70,6 +70,9 @@ app.layout = html.Div(
         dcc.Store(id="registry-refresh", data=0),  # 建製程/建模/刪除後刷新總覽
         dcc.Store(id="wiz-proc"),                   # 精靈綁定：{process_id?, dataset?, display_name?, mode:new|swap}
         dcc.Store(id="hist-proc"),                  # 歷史頁要顯示哪個製程
+        dcc.Store(id="preview-store"),              # golden 選擇預覽資料（dataset_preview）
+        dcc.Store(id="golden-spec"),                # 目前 golden 規格（連續/勾選/自動）供建模
+        dcc.Store(id="auto-runs"),                  # 自動挑選的 golden 區間（疊圖用）
         dcc.Store(id="tl-store"),  # 時間線 points（供門檻 slider 重繪，不重新評分）
         dcc.Interval(id="tick", interval=60000, n_intervals=0),  # 自動刷新（60s）——盤面不需手動戳
         html.Div(style={"display": "flex", "alignItems": "center", "justifyContent": "space-between",
@@ -229,10 +232,31 @@ def _wizard_view():
                 html.Div(id="overview", style={"marginTop": "10px", "fontSize": "14px", "color": "#51607a"}),
             ]),
             html.Div(id="wp2", style={"display": "none"}, children=[
-                html.Div("② 圈選訓練資料時間範圍（黃金期，代表正常）", style={"fontWeight": 500, "marginBottom": "10px"}),
-                dcc.RangeSlider(id="golden-range", min=0, max=1500, value=[0, 600], allowCross=False,
-                                tooltip={"placement": "bottom", "always_visible": True}),
-                html.Div(id="golden-readout", style={"fontSize": "13px", "color": _OK, "marginTop": "6px"}),
+                html.Div("② 選擇訓練資料（黃金基準，代表 A 正常運轉）", style={"fontWeight": 500, "marginBottom": "8px"}),
+                dcc.RadioItems(id="golden-mode", value="range", inline=True,
+                               options=[{"label": " 連續區間", "value": "range"},
+                                        {"label": " 勾選 campaign", "value": "segments"},
+                                        {"label": " 自動挑乾淨段", "value": "auto"}],
+                               style={"marginBottom": "8px", "fontSize": "13px"}),
+                html.Div(id="gm-range", children=[
+                    dcc.RangeSlider(id="golden-range", min=0, max=1500, value=[0, 600], allowCross=False,
+                                    tooltip={"placement": "bottom", "always_visible": True}),
+                ]),
+                html.Div(id="gm-segments", style={"display": "none"}, children=[
+                    html.Div("勾選代表「A 正常」的 campaign（可多選/非連續）：",
+                             style={"fontSize": "13px", "color": "#51607a", "marginBottom": "4px"}),
+                    dcc.Checklist(id="golden-segs", options=[], value=[],
+                                  style={"fontSize": "13px"}, labelStyle={"display": "block", "margin": "2px 0"}),
+                ]),
+                html.Div(id="gm-auto", style={"display": "none"}, children=[
+                    html.Div("系統用變點切段，自動挑最早的乾淨平穩段當基準（適合不確定該選哪段時）。",
+                             style={"fontSize": "13px", "color": "#51607a"}),
+                    _btn("套用自動挑選", "btn-auto-golden", style={"marginTop": "6px", "padding": "6px 14px"}),
+                ]),
+                html.Div(id="golden-readout", style={"fontSize": "13px", "color": _OK, "marginTop": "8px"}),
+                html.Div("下圖：標準化偏離度（越高＝越偏離全域平均，用來看資料長相）；色帶＝campaign；綠框＝已選 golden。",
+                         style={"fontSize": "12px", "color": "#94a3b8", "marginTop": "8px"}),
+                dcc.Loading(dcc.Graph(id="golden-preview", config={"displayModeBar": False})),
             ]),
             html.Div(id="wp3", style={"display": "none"}, children=[
                 html.Div("③ 測試資料範圍與評分窗長", style={"fontWeight": 500, "marginBottom": "10px"}),
@@ -447,15 +471,16 @@ def _render_steps(step):
 
 # ---------- 資料源 → 時間軸 ----------
 @app.callback(Output("overview", "children"), Output("golden-range", "max"), Output("golden-range", "value"),
-              Output("golden-range", "marks"), Output("golden-readout", "children"), Output("nrows", "data"),
-              Output("window", "value"),
+              Output("golden-range", "marks"), Output("nrows", "data"), Output("window", "value"),
+              Output("preview-store", "data"), Output("golden-segs", "options"), Output("golden-segs", "value"),
               Input("dataset", "value"))
 def _on_dataset(name):
     cat = catalog.describe(name)  # item3：人話說明 + 推薦窗長（讓使用者點下一關就看到對應結果）
     try:
         ov = demo.dataset_overview(name)
+        pv = demo.dataset_preview(name)  # golden 選擇視覺化資料
     except Exception as e:
-        return html.Span(f"無法載入資料集：{e}", style={"color": _BAD}), 1500, [0, 600], {}, "", 1500, 60
+        return html.Span(f"無法載入資料集：{e}", style={"color": _BAD}), 1500, [0, 600], {}, 1500, 60, None, [], []
     n = ov["n_rows"]
     g = ov["golden_suggested"] or [0, int(0.4 * n)]
     marks = {0: "0", n: str(n), n // 2: str(n // 2)}
@@ -468,25 +493,83 @@ def _on_dataset(name):
         html.Div("分段：" + "、".join(f"{s['label']}[{s['start']}:{s['end']}]" for s in ov["segments"]),
                  style={"color": "#94a3b8", "fontSize": "12px"}),
     ], style={"background": "#f6f7f9", "borderRadius": "8px", "padding": "10px 12px"})
-    return desc, n, g, marks, f"已選訓練段 [{g[0]}:{g[1]}]　約 {g[1] - g[0]} 筆", n, cat["default_window"]
+    seg_opts = [{"label": f"{s['label']} [{s['start']}:{s['end']}]", "value": s["id"]} for s in pv["segments"]]
+    gs, ge = g[0], g[1]  # 預設勾選與建議 golden 重疊的 campaign
+    seg_val = [s["id"] for s in pv["segments"] if s["start"] < ge and s["end"] > gs]
+    return desc, n, g, marks, n, cat["default_window"], pv, seg_opts, seg_val
 
 
-@app.callback(Output("golden-readout", "children", allow_duplicate=True), Input("golden-range", "value"),
-              prevent_initial_call=True)
-def _golden_readout(v):
-    return f"已選訓練段 [{v[0]}:{v[1]}]　約 {v[1] - v[0]} 筆"
+def _golden_fig(pv, runs):
+    """golden 選擇預覽圖：偏離度時間線 + campaign 色帶 + 已選 golden 綠框。"""
+    xs, vs = pv["series_x"], pv["series_v"]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=xs, y=vs, mode="lines", line={"color": "#64748b", "width": 1},
+                  hovertemplate="列 %{x}<br>偏離度 %{y} σ<extra></extra>"))
+    band = ["rgba(99,102,241,0.06)", "rgba(234,88,12,0.06)"]
+    for i, s in enumerate(pv["segments"]):  # campaign 色帶
+        fig.add_vrect(x0=s["start"], x1=s["end"], fillcolor=band[i % 2], line_width=0,
+                      annotation_text=s["label"], annotation_position="top left", annotation_font_size=10)
+    for r in (runs or []):  # 已選 golden（綠框）
+        fig.add_vrect(x0=r[0], x1=r[1], fillcolor="rgba(22,163,74,0.18)", line_width=1, line_color=_OK)
+    ymax = (max(vs) * 1.1) if vs else 1
+    fig.update_layout(height=240, margin={"l": 44, "r": 10, "t": 16, "b": 32}, showlegend=False,
+                      xaxis={"title": "資料列索引"}, yaxis={"title": "偏離度 (σ)", "range": [0, ymax]})
+    return fig
+
+
+@app.callback(Output("gm-range", "style"), Output("gm-segments", "style"), Output("gm-auto", "style"),
+              Input("golden-mode", "value"))
+def _show_golden_mode(mode):
+    vis, hid = {"display": "block"}, {"display": "none"}
+    return (vis if mode == "range" else hid, vis if mode == "segments" else hid, vis if mode == "auto" else hid)
+
+
+@app.callback(Output("golden-preview", "figure"), Output("golden-readout", "children"), Output("golden-spec", "data"),
+              Input("golden-mode", "value"), Input("golden-range", "value"), Input("golden-segs", "value"),
+              Input("auto-runs", "data"), Input("preview-store", "data"), prevent_initial_call=True)
+def _golden_preview(mode, rng, segs, auto_runs, pv):
+    """依選法重繪預覽 + 算選取摘要 + 產生 build 用 golden 規格（連續/勾選/自動）。"""
+    if not pv:
+        return no_update, no_update, no_update
+    seg_by = {s["id"]: s for s in pv["segments"]}
+    if mode == "segments":
+        runs = sorted([[seg_by[i]["start"], seg_by[i]["end"]] for i in (segs or []) if i in seg_by])
+        spec = {"segments": list(segs or [])}
+        n_sel = sum(e - s for s, e in runs)
+        readout = f"已勾選 {len(runs)} 段 campaign，共 {n_sel} 筆作為 golden" if runs else "⚠ 尚未勾選 campaign"
+    elif mode == "auto":
+        runs = (auto_runs or {}).get("runs", [])
+        spec, n_sel = "auto", (auto_runs or {}).get("n_selected", 0)
+        readout = f"自動挑選：{len(runs)} 段、共 {n_sel} 筆" if runs else "點「套用自動挑選」執行"
+    else:  # range
+        s, e = (rng or [0, 0])
+        runs, spec = [[s, e]], {"range": [s, e]}
+        readout = f"已選連續區間 [{s}:{e}]　約 {e - s} 筆"
+    return _golden_fig(pv, runs), readout, spec
+
+
+@app.callback(Output("auto-runs", "data"), Output("golden-mode", "value"),
+              Input("btn-auto-golden", "n_clicks"), State("dataset", "value"), prevent_initial_call=True)
+def _auto_golden(_n, name):
+    """一鍵自動挑乾淨段（接後端 'auto' 變點切段）→ 疊圖 + 切到自動模式。"""
+    try:
+        r = demo.resolve_golden_runs(name, "auto")
+    except Exception:
+        r = {"runs": [], "n_selected": 0}
+    return r, "auto"
 
 
 # ---------- 建模 ----------
 @app.callback(Output("bundle-store", "data"), Output("build-result", "children"),
               Output("registry-refresh", "data", allow_duplicate=True),
               Input("btn-build", "n_clicks"), State("wiz-proc", "data"), State("wiz-name", "value"),
-              State("dataset", "value"), State("golden-range", "value"), State("window", "value"),
-              prevent_initial_call=True)
-def _build(_n, wp, wiz_name, name, grange, window):
+              State("dataset", "value"), State("golden-spec", "data"), State("golden-range", "value"),
+              State("window", "value"), prevent_initial_call=True)
+def _build(_n, wp, wiz_name, name, gspec, grange, window):
     """建立/更換模型（registry）：全新製程先建 placeholder 再建模；既有製程直接登錄新版本。FAIL gate 物理擋存檔。"""
     wp = wp or {"mode": "new"}
     at = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    golden = gspec or {"range": list(grange or [0, 600])}  # 連續/勾選/自動 規格；無則退回 RangeSlider 連續
     try:
         if wp.get("mode") == "build" and wp.get("process_id"):
             pid, dataset = wp["process_id"], wp["dataset"]
@@ -494,7 +577,7 @@ def _build(_n, wp, wiz_name, name, grange, window):
             dataset = name
             disp = (wiz_name or "").strip() or catalog.describe(dataset)["title"]
             pid = demo.create_process(_REGISTRY, display_name=disp, dataset=dataset, at=at)["id"]
-        r = demo.build_model_for_process(_REGISTRY, _MODELS_DIR, pid, golden=tuple(grange),
+        r = demo.build_model_for_process(_REGISTRY, _MODELS_DIR, pid, golden=golden,
                                          window=int(window or 60), at=at)
     except Exception as e:
         return no_update, html.Span(f"❌ 建模失敗：{e}", style={"color": _BAD}), no_update

@@ -25,6 +25,43 @@ def test_catalog_covers_every_registered_dataset():
         assert d["title"] and len(d["blurb"]) > 10 and d["default_window"] > 0, f"{name} 缺說明"
 
 
+def test_dataset_preview_series_and_segments():
+    """golden 選擇視覺化：preview 給降採樣偏離度時間線 + campaign 分段(含 id) + 真值建議。"""
+    pv = demo.dataset_preview("synthetic", max_points=200)
+    assert pv["n_rows"] > 0 and len(pv["series_x"]) == len(pv["series_v"]) and len(pv["series_x"]) <= 200
+    assert pv["segments"] and all("id" in s and "start" in s for s in pv["segments"])
+    assert pv["golden_suggested"] and pv["golden_suggested"][0] < pv["golden_suggested"][1]
+
+
+def test_golden_arg_from_spec_forms():
+    """spec → build 引數：auto/連續/勾選 三形式（勾選→正確 bool mask）。"""
+    import numpy as np
+    assert demo.golden_arg_from_spec("synthetic", "auto") == "auto"
+    assert demo.golden_arg_from_spec("synthetic", {"range": [0, 300]}) == (0, 300)
+    assert demo.golden_arg_from_spec("synthetic", [0, 300]) == (0, 300)
+    mask = demo.golden_arg_from_spec("synthetic", {"segments": [0]})
+    assert isinstance(mask, np.ndarray) and mask.dtype == bool and mask.any()
+
+
+def test_resolve_golden_runs_segments_match_bounds():
+    """勾選 campaign → runs 對齊該段邊界；auto → 非空（變點切段）。"""
+    pv = demo.dataset_preview("synthetic")
+    seg0 = pv["segments"][0]
+    r = demo.resolve_golden_runs("synthetic", {"segments": [seg0["id"]]})
+    assert r["runs"] and r["runs"][0] == [seg0["start"], seg0["end"]] and r["n_selected"] > 0
+    assert demo.resolve_golden_runs("synthetic", "auto")["n_selected"] > 0
+
+
+def test_build_model_accepts_segments_and_auto_spec(tmp_path):
+    """更換模型可用勾選/自動 golden（接出 mask/auto）——建模成功且登錄版本。"""
+    reg, md = _reg(tmp_path), str(tmp_path)
+    p = demo.create_process(reg, display_name="A", dataset="synthetic", at=_AT)
+    pv = demo.dataset_preview("synthetic")
+    seg0 = pv["segments"][0]
+    r = demo.build_model_for_process(reg, md, p["id"], golden={"segments": [seg0["id"]]}, window=60, at=_AT)
+    assert r["saved"] is True and r["model"]["version"] == 1
+
+
 def test_create_build_overview_healthy(tmp_path):
     reg, md = _reg(tmp_path), str(tmp_path)
     p = demo.create_process(reg, display_name="蒸餾A", dataset="synthetic", at=_AT, area="常壓")
