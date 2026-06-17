@@ -22,6 +22,7 @@ from ..interface import GRADE_LABEL, TIMESTAMP, Y_VALUE
 from ..y_health import YHealthIndex
 from .acceptance import acceptance_from_dataset
 from .alarms import build_alarm_event
+from .assets import AssetStore
 from .bundle import build_bundle, load, save
 from .events import IncidentStore
 from .roi import estimate_roi
@@ -474,3 +475,110 @@ def timeline_to_csv(points: list[dict]) -> str:
     for p in points:
         w.writerow(p)
     return buf.getvalue()
+
+
+# ====== 增量7：模型 registry orchestration（製程/模型解耦；UI 殼只呼叫本層）======
+# 設計與不變式見 docs/model_registry_design.md（已 3 紅隊複審）。assets.AssetStore 管狀態，本層接資料集評分。
+
+def create_process(registry_path: str, *, display_name: str, dataset: str, by: str = "未具名",
+                   at: str, area: str | None = None) -> dict:
+    """建立製程（placeholder，先無模型）。dataset 必須已註冊。回傳 process record。"""
+    return AssetStore(registry_path).create_process(display_name=display_name, dataset=dataset, by=by, at=at, area=area)
+
+
+def build_model_for_process(registry_path: str, models_dir: str, process_id: str, *, golden, window: int,
+                            by: str = "未具名", at: str, holdout_frac: float = 0.5) -> dict:
+    """為製程建立/更換模型（重建基準）：先驗收 gate（FAIL 不存檔不登錄）→ 存版本化 bundle → 登錄 registry。
+
+    更換模型＝同製程再呼一次（version 單調+1、舊版自動成歷史、current 指新版）。acceptance 快照存入 model record
+    供歷史頁判 rollback（紅隊 RT-3）。回傳 {saved, acceptance, model?, build?}。
+    """
+    store = AssetStore(registry_path)
+    p = store.get_process(process_id)
+    dataset = p["dataset"]
+    version = int(p["next_version"])  # peek：build_and_save_model 不動 registry，record_build 會給同號（下方 assert）
+    acc = acceptance_summary(dataset, holdout_frac=holdout_frac, window=int(window))
+    if acc.get("available") and not acc["passed"]:  # FAIL 物理擋存檔（治理）
+        return {"saved": False, "acceptance": acc, "process_id": process_id}
+    stem = f"{process_id}__v{version}"
+    m = build_and_save_model(dataset, golden=golden, models_dir=models_dir, created_at=at, product=stem)
+    rec = store.record_build(process_id, path=f"{stem}.joblib", dataset=dataset, golden_range=m["golden_range"],
+                             fingerprint_hi=m["fingerprint_hi"], has_y_health=m["has_y_health"],
+                             acceptance=acc if acc.get("available") else None, by=by, at=at)
+    if rec["version"] != version:  # fail-loud：版本 peek 與登錄不一致（registry 被並發改動）
+        raise RuntimeError(f"版本不一致：peek v{version} vs 登錄 v{rec['version']}")
+    return {"saved": True, "acceptance": acc, "model": rec, "build": m, "process_id": process_id}
+
+
+def delete_model(registry_path: str, model_id: str, *, reason: str = "", by: str = "未具名", at: str) -> dict:
+    """軟刪除單一模型版本（只翻旗標不刪檔；若為現役→current 退回最高版未刪）。"""
+    return AssetStore(registry_path).soft_delete_model(model_id, reason=reason, by=by, at=at)
+
+
+def delete_process(registry_path: str, process_id: str, *, reason: str = "", by: str = "未具名", at: str,
+                   incidents_path: str | None = None) -> dict:
+    """軟刪除製程（完全隱藏，只在歷史可見）；給 incidents_path 則強制關閉其孤兒 active 事件。"""
+    store = IncidentStore(incidents_path) if incidents_path else None
+    return AssetStore(registry_path).soft_delete_process(process_id, reason=reason, by=by, at=at, incident_store=store)
+
+
+def restore_process(registry_path: str, process_id: str, *, by: str = "未具名", at: str) -> dict:
+    """還原被軟刪除的製程（入口在歷史/稽核頁）。"""
+    return AssetStore(registry_path).restore_process(process_id, by=by, at=at)
+
+
+def model_history(registry_path: str, process_id: str, *, incidents_path: str | None = None) -> dict:
+    """模型歷史監控紀錄：版本清單(含 acceptance 快照) + 稽核 log + 該製程服役期 incidents（紅隊 RT-3）。"""
+    h = AssetStore(registry_path).history(process_id)
+    incs = IncidentStore(incidents_path).list(product=process_id) if incidents_path else []
+    return {**h, "incidents": incs}
+
+
+def _score_current(models_dir: str, model_rec: dict, window: int) -> tuple:
+    """評現役模型最後一窗的健康燈。回傳 (health, alarm, status)；資料源/檔不可得→(None,None,'data_unavailable')。"""
+    try:
+        b = load(os.path.join(models_dir, model_rec["path"]))
+        ds, _gt = registry.build(model_rec["dataset"])
+        X = ds.frame[list(b.x_columns)].to_numpy(dtype=float)
+        Xw = X[-window:] if len(X) >= window else X
+        alarm = bool(b.health.alarm(Xw, compute_fwer=False))
+        return round(float(b.health.health_index(Xw)), 3), alarm, ("alarm" if alarm else "healthy")
+    except Exception:  # 檔損/指紋漂移/資料源不可得 → 誠實標，不杜撰健康度
+        return None, None, "data_unavailable"
+
+
+def assets_overview(registry_path: str, models_dir: str, *, incidents_path: str | None = None, window: int = 60) -> dict:
+    """總覽資料源（取代 plant_hierarchy 接 registry）：列非刪製程（含 placeholder「待建模」），健康燈**三態**
+    （綠健康/紅告警/灰待建模或不可得），依 area 分組。placeholder 不進綠紅分母（紅隊：避免污染全廠健康語意）。
+
+    回傳 {plant_status, n_assets, n_monitored, n_alarm, n_placeholder, configured, areas, assets}。
+    無 registry 檔 → 空 registry（n_assets=0），前端顯「尚無製程」。
+    """
+    store = AssetStore(registry_path)
+    inc_store = IncidentStore(incidents_path) if incidents_path else None
+    assets = []
+    for p in store.list_processes():  # 預設不含已軟刪除（完全隱藏）
+        cur = store.current_model(p["id"])
+        a = {"process_id": p["id"], "display_name": p["display_name"], "dataset": p["dataset"],
+             "area": p["area"], "current_model_id": p["current_model_id"], "version": None,
+             "health": None, "alarm": None, "status": "placeholder", "bundle_path": None,
+             "active_incidents": 0}
+        if cur is not None:
+            a["version"] = cur["version"]
+            a["bundle_path"] = os.path.join(models_dir, cur["path"])
+            a["health"], a["alarm"], a["status"] = _score_current(models_dir, cur, window)
+        if inc_store is not None:
+            a["active_incidents"] = sum(1 for i in inc_store.list(product=p["id"]) if i["status"] in ("open", "ack"))
+        assets.append(a)
+    n_alarm = sum(1 for a in assets if a["status"] == "alarm")
+    n_monitored = sum(1 for a in assets if a["status"] in ("healthy", "alarm"))
+    n_placeholder = sum(1 for a in assets if a["status"] in ("placeholder", "data_unavailable"))
+    plant_status = "alarm" if n_alarm else ("healthy" if n_monitored else "empty")  # 只看已監控者，灰不進分母
+    groups: dict = {}
+    for a in assets:
+        groups.setdefault(a["area"] or "未分區", []).append(a)
+    areas = [{"area": k, "assets": v, "n_alarm": sum(1 for x in v if x["status"] == "alarm")}
+             for k, v in groups.items()]
+    return {"plant_status": plant_status, "n_assets": len(assets), "n_monitored": n_monitored,
+            "n_alarm": n_alarm, "n_placeholder": n_placeholder, "configured": any(a["area"] for a in assets),
+            "areas": areas, "assets": assets}
