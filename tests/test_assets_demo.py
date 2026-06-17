@@ -6,7 +6,8 @@ WHY：製程/模型解耦後，總覽必須能同時容納 placeholder 與已監
 
 import os
 
-from health_index.deploy import demo
+from health_index.adapters import registry
+from health_index.deploy import catalog, demo
 from health_index.deploy.assets import AssetStore
 from health_index.deploy.events import IncidentStore
 
@@ -15,6 +16,13 @@ _AT = "2026-06-17T10:00:00+08:00"
 
 def _reg(tmp_path):
     return str(tmp_path / "registry.json")
+
+
+def test_catalog_covers_every_registered_dataset():
+    """item3：每個已註冊資料集都要有導引說明（title/blurb 非空、window>0）——否則使用者點到會無說明。"""
+    for name in registry.available():
+        d = catalog.describe(name)
+        assert d["title"] and len(d["blurb"]) > 10 and d["default_window"] > 0, f"{name} 缺說明"
 
 
 def test_create_build_overview_healthy(tmp_path):

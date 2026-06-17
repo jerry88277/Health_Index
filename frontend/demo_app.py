@@ -18,11 +18,13 @@ import tempfile
 import plotly.graph_objects as go
 from dash import ALL, Dash, Input, Output, State, ctx, dcc, html, no_update
 
-from health_index.deploy import demo
+from health_index.deploy import catalog, demo
+from health_index.deploy.assets import AssetStore
 from health_index.deploy.events import IncidentStore
 
 _MODELS_DIR = os.path.join(tempfile.gettempdir(), "health_index_demo_models")
 _INCIDENTS = os.path.join(_MODELS_DIR, "incidents.json")  # 事件閉環持久化
+_REGISTRY = os.path.join(_MODELS_DIR, "registry.json")  # 增量7 製程/模型 registry
 _ACCENT = "#4338ca"  # 單一品牌 accent（taste-skill：靛藍）
 _OK, _BAD, _CONF = "#16a34a", "#dc2626", "#1565c0"  # 語義狀態色：綠健康/紅告警/藍可信度
 _REGION_COLOR = {"golden": _OK, "clean_reentry": "#66bb6a", "drift": _BAD, "other": "#ef6c00"}
@@ -65,6 +67,9 @@ app.layout = html.Div(
         dcc.Store(id="bundle-store"),
         dcc.Store(id="nrows", data=1500),
         dcc.Store(id="events-refresh", data=0),
+        dcc.Store(id="registry-refresh", data=0),  # 建製程/建模/刪除後刷新總覽
+        dcc.Store(id="wiz-proc"),                   # 精靈綁定：{process_id?, dataset?, display_name?, mode:new|swap}
+        dcc.Store(id="hist-proc"),                  # 歷史頁要顯示哪個製程
         dcc.Store(id="tl-store"),  # 時間線 points（供門檻 slider 重繪，不重新評分）
         dcc.Interval(id="tick", interval=60000, n_intervals=0),  # 自動刷新（60s）——盤面不需手動戳
         html.Div(style={"display": "flex", "alignItems": "center", "justifyContent": "space-between",
@@ -85,6 +90,7 @@ app.layout = html.Div(
         html.Div(id="scr-wizard", style={"display": "none"}),
         html.Div(id="scr-results", style={"display": "none"}),
         html.Div(id="scr-events", style={"display": "none"}),
+        html.Div(id="scr-history", style={"display": "none"}),
         dcc.Download(id="dl-incidents"),
         dcc.Download(id="dl-timeline"),
     ],
@@ -96,58 +102,83 @@ def _home_view():
     return [
         html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "flex-start"}, children=[
             html.Div([html.H2("監控總覽", style={"margin": "0 0 4px", "fontWeight": 500}),
-                      html.Div("目前線上的監控模型與健康狀態", style={"color": "#51607a", "fontSize": "14px"})]),
-            _btn("＋ 新建監控模型", "btn-new", primary=True),
+                      html.Div("各製程（監控點）的現役模型與健康狀態", style={"color": "#51607a", "fontSize": "14px"})]),
+            html.Div([_btn("＋ 新建製程", "btn-newproc", style={"marginRight": "8px"}),
+                      _btn("＋ 新建監控模型", "btn-new", primary=True)]),
         ]),
+        html.Div(id="newproc-form", style={"display": "none", "margin": "12px 0"}, children=[_card([
+            html.Div("新建製程（先佔名，可稍後熱插拔監控模型）", style={"fontWeight": 500, "marginBottom": "8px"}),
+            html.Div(style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "alignItems": "center"}, children=[
+                dcc.Input(id="np-name", type="text", placeholder="製程名稱（如 1號常壓蒸餾塔）", style={"width": "240px"}),
+                dcc.Dropdown(id="np-dataset", clearable=False, value="synthetic",
+                             options=[{"label": catalog.describe(d)["title"], "value": d} for d in demo.available_datasets()],
+                             style={"width": "260px"}),
+                dcc.Input(id="np-area", type="text", placeholder="區域（選填，如 常壓蒸餾）", style={"width": "180px"}),
+                _btn("建立", "btn-np-create", primary=True, style={"padding": "6px 14px"}),
+            ]),
+            html.Div(id="np-status", style={"fontSize": "13px", "marginTop": "6px"}),
+        ])]),
         html.Div(id="home-metrics", style={"margin": "16px 0"}),
         _LEGEND,
     ]
 
 
-_STATUS = {"healthy": ("● 健康", _OK), "alarm": ("● 告警", _BAD), "data_unavailable": ("○ 資料源不可得", "#888"),
-           "unknown": ("○ 未知", "#888")}
+_STATUS = {"healthy": ("● 健康", _OK), "alarm": ("● 告警", _BAD), "placeholder": ("○ 待建模", "#b26a00"),
+           "data_unavailable": ("○ 資料源不可得", "#888"), "unknown": ("○ 未知", "#888")}
+
+
+def _mini_btn(label, idobj, *, primary=False):
+    st = {"padding": "4px 10px", "fontSize": "12px", "borderRadius": "7px", "marginRight": "6px", "marginTop": "6px",
+          "border": f"1px solid {_ACCENT}", "cursor": "pointer", "background": _ACCENT if primary else "#fff",
+          "color": "#fff" if primary else _ACCENT}
+    return html.Button(label, id=idobj, n_clicks=0, style=st)
 
 
 def _asset_card(r):
-    """單一裝置卡（可評分者可點進結果）。"""
+    """單一製程卡（三態：綠健康／紅告警／黃待建模／灰不可得）+ 明確動作按鈕（避免整卡點擊與按鈕衝突）。"""
     txt, col = _STATUS.get(r["status"], _STATUS["unknown"])
-    openable = r["status"] in ("healthy", "alarm")
-    hp = f"健康度 {r['health']}" if r["health"] is not None else "（需該資料源才能評分）"
+    pid = r["process_id"]
+    hp = (f"健康度 {r['health']}　v{r['version']}" if r["health"] is not None
+          else ("尚未建立監控模型" if r["status"] == "placeholder" else "（資料源不可得，無法評分）"))
     ai = r.get("active_incidents", 0)
-    children = [
-        html.Div(r["product"], style={"fontWeight": 500}),
+    acts = []
+    if r["status"] in ("healthy", "alarm"):
+        acts.append(_mini_btn("查看結果 →", {"type": "open-model", "pid": pid}, primary=True))
+        acts.append(_mini_btn("更換模型", {"type": "build-cta", "pid": pid}))
+    elif r["status"] == "placeholder":
+        acts.append(_mini_btn("建立模型 →", {"type": "build-cta", "pid": pid}, primary=True))
+    else:  # data_unavailable
+        acts.append(_mini_btn("重建模型", {"type": "build-cta", "pid": pid}))
+    acts.append(_mini_btn("歷史", {"type": "hist-cta", "pid": pid}))
+    acts.append(_mini_btn("刪除", {"type": "del-proc", "pid": pid}))
+    style = {"display": "inline-block", "width": "230px", "marginRight": "10px", "verticalAlign": "top",
+             "border": f"1px solid {col if r['status'] == 'alarm' else '#e3e8ef'}",
+             "borderRadius": "12px", "padding": "16px 18px", "background": "#fff"}
+    return html.Div([
+        html.Div(r["display_name"], style={"fontWeight": 500}),
+        html.Div(f"資料源 {r['dataset']}", style={"color": "#94a3b8", "fontSize": "11px"}),
         html.Div(txt, style={"color": col, "fontSize": "14px", "margin": "4px 0"}),
         html.Div(hp, style={"color": "#51607a", "fontSize": "12px"}),
         html.Div(f"未結事件 {ai}" if ai else "", style={"color": _BAD, "fontSize": "12px"}),
-        html.Div("點此查看 →" if openable else "—",
-                 style={"color": _ACCENT if openable else "#bbb", "fontSize": "12px", "marginTop": "6px"}),
-    ]
-    style = {"display": "inline-block", "width": "190px", "marginRight": "10px", "verticalAlign": "top",
-             "border": f"1px solid {col if r['status'] == 'alarm' else '#e3e8ef'}",
-             "borderRadius": "12px", "padding": "16px 18px", "background": "#fff",
-             "cursor": "pointer" if openable else "default"}
-    if openable:
-        return html.Div(children, id={"type": "open-model", "product": r["product"]}, n_clicks=0, style=style)
-    return html.Div(children, style=style)
+        html.Div(acts),
+    ], style=style)
 
 
 @app.callback(Output("home-metrics", "children"), Input("screen", "data"), Input("events-refresh", "data"),
-              Input("tick", "n_intervals"))
-def _home_metrics(screen, _r, _t):
-    pv = demo.plant_hierarchy(_MODELS_DIR, incidents_path=_INCIDENTS)  # 全廠階層視圖（區域分組）+ 各裝置未結事件
-    ov = pv["assets"]
-    n_alarm = pv["n_alarm"]
-    sources = demo.available_datasets()
+              Input("registry-refresh", "data"), Input("tick", "n_intervals"))
+def _home_metrics(screen, _r, _rr, _t):
+    pv = demo.assets_overview(_REGISTRY, _MODELS_DIR, incidents_path=_INCIDENTS)  # registry：含 placeholder，三態
+    assets = pv["assets"]
     pcol = {"alarm": _BAD, "healthy": _OK, "empty": "#888"}[pv["plant_status"]]
-    ptxt = {"alarm": "⚠ 有裝置告警", "healthy": "✅ 全廠健康", "empty": "尚無模型"}[pv["plant_status"]]
-    banner = html.Div(f"全廠狀態：{ptxt}　·　{pv['n_assets']} 裝置／{n_alarm} 告警中",
+    ptxt = {"alarm": "⚠ 有製程告警", "healthy": "✅ 全廠健康", "empty": "尚無監控中製程"}[pv["plant_status"]]
+    banner = html.Div(f"全廠狀態：{ptxt}　·　{pv['n_monitored']} 監控中／{pv['n_alarm']} 告警／{pv['n_placeholder']} 待建模",
                       className="pg-flash" if pv["plant_status"] == "alarm" else "",  # 告警閃示（聲音替代，作業員）
                       style={"borderLeft": f"4px solid {pcol}", "background": "#f6f7f9", "padding": "10px 14px",
                              "color": pcol, "fontWeight": 500, "marginBottom": "12px"})
     tiles = html.Div(className="pg-grid", style={"display": "grid", "gridTemplateColumns": "repeat(3,1fr)", "gap": "12px"},
-                     children=[_tile("監控中模型", str(len(ov))), _tile("告警中", str(n_alarm)),
-                               _tile("可監控資料源", str(len(sources)))])
-    if ov:
+                     children=[_tile("監控中", str(pv["n_monitored"])), _tile("告警中", str(pv["n_alarm"])),
+                               _tile("待建模", str(pv["n_placeholder"]))])
+    if assets:
         blocks = []
         for area in pv["areas"]:  # 依區域分組（處長階層視圖）
             ac = _BAD if area["n_alarm"] else "#0f172a"
@@ -157,12 +188,13 @@ def _home_metrics(screen, _r, _t):
                 html.Div([_asset_card(r) for r in area["assets"]]),
             ]))
         note = html.Span() if pv["configured"] else html.Div(
-            "（未設廠區；放 models/plant.json（product→區域）即依廠→區→裝置分組）",
+            "（製程未設區域；新建製程時填「區域」欄即依 廠→區→製程 分組）",
             style={"color": "#888", "fontSize": "12px", "marginTop": "8px"})
-        body = html.Div([html.Div("已建立模型（當前健康）— 點卡片查看結果", style={"fontWeight": 500, "margin": "8px 0"}),
+        body = html.Div([html.Div("製程清單（待建模不計入綠紅健康燈）— 操作見各卡按鈕",
+                                  style={"fontWeight": 500, "margin": "8px 0"}),
                          html.Div(blocks), note])
     else:
-        body = html.Div("尚無模型。點右上「＋ 新建監控模型」開始，選一段正常時期當基準。",
+        body = html.Div("尚無製程。點右上「＋ 新建監控模型」走精靈直接建，或「＋ 新建製程」先佔名稍後熱插拔模型。",
                         style={"color": "#51607a", "background": "#f6f7f9", "padding": "14px", "borderRadius": "10px"})
     return html.Div([banner, tiles, html.Div(body, style={"marginTop": "14px"})])
 
@@ -188,9 +220,12 @@ def _wizard_view():
         html.Div(id="stepper", style={"display": "flex", "alignItems": "center", "gap": "6px", "margin": "14px 0"}),
         _card([
             html.Div(id="wp1", children=[
-                html.Div("① 選擇要監控的產品 / 資料源", style={"fontWeight": 500, "marginBottom": "8px"}),
-                dcc.Dropdown(id="dataset", options=[{"label": d, "value": d} for d in demo.available_datasets()],
-                             value="synthetic", clearable=False, style={"width": "340px"}),
+                html.Div("① 選擇資料源並命名製程", style={"fontWeight": 500, "marginBottom": "8px"}),
+                html.Div(id="wiz-bind-info", style={"fontSize": "13px", "marginBottom": "8px", "color": _ACCENT}),
+                dcc.Input(id="wiz-name", type="text", placeholder="製程名稱（選填，預設用資料源標題）",
+                          style={"width": "320px", "marginBottom": "8px", "display": "block"}),
+                dcc.Dropdown(id="dataset", clearable=False, value="synthetic", style={"width": "380px"},
+                             options=[{"label": catalog.describe(d)["title"], "value": d} for d in demo.available_datasets()]),
                 html.Div(id="overview", style={"marginTop": "10px", "fontSize": "14px", "color": "#51607a"}),
             ]),
             html.Div(id="wp2", style={"display": "none"}, children=[
@@ -282,8 +317,21 @@ def _events_view():
     ]
 
 
+def _history_view():
+    return [
+        html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"}, children=[
+            html.Div([html.H2("製程歷史 / 稽核", style={"margin": "0 0 4px", "fontWeight": 500}),
+                      html.Div("模型版本、驗收快照、稽核 log、服役期事件（已軟刪除製程可在此還原）",
+                               style={"color": "#51607a", "fontSize": "14px"})]),
+            _btn("← 回總覽", "btn-hist-home"),
+        ]),
+        dcc.Loading(html.Div(id="history-body", style={"marginTop": "12px"})),
+    ]
+
+
 # 初始填入各屏內容（依 id 對應，避免索引脆弱）
-_VIEWS = {"scr-home": _home_view, "scr-wizard": _wizard_view, "scr-results": _results_view, "scr-events": _events_view}
+_VIEWS = {"scr-home": _home_view, "scr-wizard": _wizard_view, "scr-results": _results_view,
+          "scr-events": _events_view, "scr-history": _history_view}
 for _child in app.layout.children:
     if getattr(_child, "id", None) in _VIEWS:
         _child.children = _VIEWS[_child.id]()
@@ -291,45 +339,88 @@ for _child in app.layout.children:
 
 # ---------- 路由與步進 ----------
 @app.callback(Output("screen", "data"),
-              Input("nav-home", "n_clicks"), Input("btn-new", "n_clicks"),
+              Input("nav-home", "n_clicks"),
               Input("go-results", "n_clicks"), Input("btn-results-home", "n_clicks"),
               Input("nav-events", "n_clicks"), Input("btn-events-home", "n_clicks"),
+              Input("btn-hist-home", "n_clicks"),
               prevent_initial_call=True)
 def _route(*_):
     t = ctx.triggered_id
-    return {"nav-home": "home", "btn-results-home": "home", "btn-new": "wizard",
-            "go-results": "results", "nav-events": "events", "btn-events-home": "home"}.get(t, no_update)
+    return {"nav-home": "home", "btn-results-home": "home", "go-results": "results",
+            "nav-events": "events", "btn-events-home": "home", "btn-hist-home": "home"}.get(t, no_update)
 
 
 @app.callback(Output("bundle-store", "data", allow_duplicate=True), Output("screen", "data", allow_duplicate=True),
-              Input({"type": "open-model", "product": ALL}, "n_clicks"), prevent_initial_call=True)
+              Input({"type": "open-model", "pid": ALL}, "n_clicks"), prevent_initial_call=True)
 def _open_model(clicks):
-    """點總覽模型卡 → 載入該模型 bundle + 進結果頁（解決『只能看燈、不能查看模型』）。"""
+    """點製程卡「查看結果」→ 載入該製程**現役模型** bundle（帶 dataset，供評分用正確資料源）+ 進結果頁。"""
     t = ctx.triggered_id
     if not t or not clicks or not any(c for c in clicks if c):
         return no_update, no_update
-    product = t["product"]
-    return {"bundle_path": os.path.join(_MODELS_DIR, f"{product}.joblib"), "product": product}, "results"
+    store = AssetStore(_REGISTRY)
+    cur = store.current_model(t["pid"])
+    if cur is None:
+        return no_update, no_update
+    p = store.get_process(t["pid"])
+    return ({"bundle_path": os.path.join(_MODELS_DIR, cur["path"]), "dataset": cur["dataset"],
+             "process_id": t["pid"], "display_name": p["display_name"]}, "results")
+
+
+@app.callback(Output("wiz-proc", "data"), Output("screen", "data", allow_duplicate=True),
+              Output("wstep", "data", allow_duplicate=True),
+              Input("btn-new", "n_clicks"), Input({"type": "build-cta", "pid": ALL}, "n_clicks"),
+              prevent_initial_call=True)
+def _enter_wizard(_new, _cta):
+    """進精靈：btn-new＝全新製程（可命名/選源）；build-cta＝為既有製程建模/更換（資料源鎖定）。"""
+    t = ctx.triggered_id
+    if t == "btn-new":
+        return {"mode": "new"}, "wizard", 1
+    if not isinstance(t, dict) or not any(c for c in (_cta or []) if c):
+        return no_update, no_update, no_update
+    p = AssetStore(_REGISTRY).get_process(t["pid"])
+    return ({"mode": "build", "process_id": t["pid"], "dataset": p["dataset"], "display_name": p["display_name"]},
+            "wizard", 1)
+
+
+@app.callback(Output("hist-proc", "data"), Output("screen", "data", allow_duplicate=True),
+              Input({"type": "hist-cta", "pid": ALL}, "n_clicks"), prevent_initial_call=True)
+def _enter_history(clicks):
+    """點製程卡「歷史」→ 進歷史/稽核頁（含已軟刪除製程的還原入口）。"""
+    t = ctx.triggered_id
+    if not isinstance(t, dict) or not clicks or not any(c for c in clicks if c):
+        return no_update, no_update
+    return t["pid"], "history"
 
 
 @app.callback(Output("wstep", "data"),
-              Input("btn-new", "n_clicks"), Input("btn-next", "n_clicks"), Input("btn-back", "n_clicks"),
+              Input("btn-next", "n_clicks"), Input("btn-back", "n_clicks"),
               State("wstep", "data"), prevent_initial_call=True)
-def _wstep(_n, _nx, _bk, cur):
+def _wstep(_nx, _bk, cur):
     t = ctx.triggered_id
-    if t == "btn-new":
-        return 1
     if t == "btn-next":
         return min(len(_STEPS), (cur or 1) + 1)
     return max(1, (cur or 1) - 1)
 
 
+@app.callback(Output("dataset", "value"), Output("dataset", "disabled"), Output("wiz-name", "style"),
+              Output("wiz-bind-info", "children"), Input("wiz-proc", "data"), prevent_initial_call=True)
+def _wiz_bind(wp):
+    """精靈綁定：全新製程→可命名/自選源；為既有製程建模/更換→資料源鎖定、隱藏命名（重建基準語意）。"""
+    name_show = {"width": "320px", "marginBottom": "8px", "display": "block"}
+    if not wp or wp.get("mode") == "new":
+        return no_update, False, name_show, "新製程：可命名並自選資料源（建立後即開始監控）。"
+    return (wp["dataset"], True, {"display": "none"},
+            f"為製程「{wp['display_name']}」建立／更換模型 · 資料源 {wp['dataset']}（鎖定）。"
+            "更換＝以新黃金段重建基準，舊版自動轉為歷史版本。")
+
+
 @app.callback(Output("scr-home", "style"), Output("scr-wizard", "style"), Output("scr-results", "style"),
-              Output("scr-events", "style"), Input("screen", "data"))
+              Output("scr-events", "style"), Output("scr-history", "style"), Input("screen", "data"))
 def _show_screen(screen):
     vis, hid = {"display": "block"}, {"display": "none"}
     return (vis if screen == "home" else hid, vis if screen == "wizard" else hid,
-            vis if screen == "results" else hid, vis if screen == "events" else hid)
+            vis if screen == "results" else hid, vis if screen == "events" else hid,
+            vis if screen == "history" else hid)
 
 
 @app.callback(Output("stepper", "children"), Output("wstep-left", "children"),
@@ -357,19 +448,27 @@ def _render_steps(step):
 # ---------- 資料源 → 時間軸 ----------
 @app.callback(Output("overview", "children"), Output("golden-range", "max"), Output("golden-range", "value"),
               Output("golden-range", "marks"), Output("golden-readout", "children"), Output("nrows", "data"),
+              Output("window", "value"),
               Input("dataset", "value"))
 def _on_dataset(name):
+    cat = catalog.describe(name)  # item3：人話說明 + 推薦窗長（讓使用者點下一關就看到對應結果）
     try:
         ov = demo.dataset_overview(name)
     except Exception as e:
-        return html.Span(f"無法載入資料集：{e}", style={"color": _BAD}), 1500, [0, 600], {}, "", 1500
+        return html.Span(f"無法載入資料集：{e}", style={"color": _BAD}), 1500, [0, 600], {}, "", 1500, 60
     n = ov["n_rows"]
     g = ov["golden_suggested"] or [0, int(0.4 * n)]
     marks = {0: "0", n: str(n), n // 2: str(n // 2)}
-    txt = html.Div([html.Div(f"列數 {n}，變數 {ov['n_features']} 維，建議 golden 段 {ov['golden_suggested']}"),
-                    html.Div(f"分段：" + "、".join(f"{s['label']}[{s['start']}:{s['end']}]" for s in ov["segments"]),
-                             style={"color": "#51607a"})])
-    return txt, n, g, marks, f"已選訓練段 [{g[0]}:{g[1]}]　約 {g[1] - g[0]} 筆", n
+    desc = html.Div([
+        html.Div(cat["title"], style={"fontWeight": 500, "color": "#0f172a"}),
+        html.Div(cat["blurb"], style={"margin": "2px 0 6px"}),
+        html.Div(f"列數 {n}，變數 {ov['n_features']} 維，建議基準段 {ov['golden_suggested']}"
+                 + (f"　·　軟量測標的：{cat['y_label']}" if cat["y_label"] else "　·　無 Y 軟量測"),
+                 style={"color": "#51607a"}),
+        html.Div("分段：" + "、".join(f"{s['label']}[{s['start']}:{s['end']}]" for s in ov["segments"]),
+                 style={"color": "#94a3b8", "fontSize": "12px"}),
+    ], style={"background": "#f6f7f9", "borderRadius": "8px", "padding": "10px 12px"})
+    return desc, n, g, marks, f"已選訓練段 [{g[0]}:{g[1]}]　約 {g[1] - g[0]} 筆", n, cat["default_window"]
 
 
 @app.callback(Output("golden-readout", "children", allow_duplicate=True), Input("golden-range", "value"),
@@ -380,46 +479,59 @@ def _golden_readout(v):
 
 # ---------- 建模 ----------
 @app.callback(Output("bundle-store", "data"), Output("build-result", "children"),
-              Input("btn-build", "n_clicks"), State("dataset", "value"), State("golden-range", "value"),
-              State("window", "value"), prevent_initial_call=True)
-def _build(_n, name, grange, window):
+              Output("registry-refresh", "data", allow_duplicate=True),
+              Input("btn-build", "n_clicks"), State("wiz-proc", "data"), State("wiz-name", "value"),
+              State("dataset", "value"), State("golden-range", "value"), State("window", "value"),
+              prevent_initial_call=True)
+def _build(_n, wp, wiz_name, name, grange, window):
+    """建立/更換模型（registry）：全新製程先建 placeholder 再建模；既有製程直接登錄新版本。FAIL gate 物理擋存檔。"""
+    wp = wp or {"mode": "new"}
+    at = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
     try:
-        # 先驗收（gate）：FAIL → 不存檔（不落地），修複審揪出的「先 save 後驗收、FAIL 仍落地」治理漏洞。
-        # 對齊使用者選的 window（修複審揪出的寫死 window=60 脫鉤）。
-        acc = demo.acceptance_summary(name, window=int(window or 60))
-        recall_txt = (f"、事故 recall {acc['drift_recall']}" if acc.get("drift_recall") is not None else "")
-        if acc.get("available") and not acc["passed"]:
-            return no_update, html.Div([
-                html.Div("⛔ 驗收未過，未存檔：" + acc["verdict"], style={"color": _BAD, "fontWeight": 500}),
-                html.Div(f"hold-out golden 誤報率 {acc['holdout_golden_fpr']}"
-                         f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{recall_txt}",
-                         style={"fontSize": "13px", "color": "#51607a"}),
-                html.Div("請改選更平穩的黃金期、或檢查資料源後重建（不合格模型不予上線）。",
-                         style={"fontSize": "13px", "color": "#51607a"}),
-            ])
-        m = demo.build_and_save_model(name, golden=tuple(grange), models_dir=_MODELS_DIR,
-                                      created_at=_dt.datetime.now().isoformat())
-        if acc.get("available"):
-            acc_line = html.Div([
-                html.Div("✅ 驗收通過：" + acc["verdict"], style={"color": _OK, "fontWeight": 500}),
-                html.Div(f"hold-out golden 誤報率 {acc['holdout_golden_fpr']}"
-                         f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{recall_txt}",
-                         style={"fontSize": "13px", "color": "#51607a"}),
-                html.Div("（驗收採資料集標準時間連續 hold-out；正式上線應對實際 golden 範圍驗收）",
-                         style={"fontSize": "12px", "color": "#888"}),
-            ])
-        else:
-            acc_line = html.Div(f"（驗收未跑：{acc.get('error', '資料不足')}）", style={"fontSize": "13px", "color": "#888"})
-        msg = html.Div([
-            html.Div(f"✅ 模型已建立並存檔：{m['product']}", style={"color": _OK, "fontWeight": 500}),
-            html.Div(f"golden {m['golden_range']}，{m['n_golden']} 樣本，指紋健康度 {m['fingerprint_hi']:.3f}"
-                     + ("，含軟測量 Ŷ" if m.get("has_y_health") else ""), style={"fontSize": "13px", "color": "#51607a"}),
-            acc_line,
-            html.Div("按「下一關」查看健康指標。", style={"fontSize": "13px", "color": "#51607a", "marginTop": "4px"}),
-        ])
-        return m, msg
+        if wp.get("mode") == "build" and wp.get("process_id"):
+            pid, dataset = wp["process_id"], wp["dataset"]
+        else:  # 全新製程：選資料源即隱式建製程（item3 快路，不強制先建 placeholder）
+            dataset = name
+            disp = (wiz_name or "").strip() or catalog.describe(dataset)["title"]
+            pid = demo.create_process(_REGISTRY, display_name=disp, dataset=dataset, at=at)["id"]
+        r = demo.build_model_for_process(_REGISTRY, _MODELS_DIR, pid, golden=tuple(grange),
+                                         window=int(window or 60), at=at)
     except Exception as e:
-        return no_update, html.Span(f"❌ 建模失敗：{e}", style={"color": _BAD})
+        return no_update, html.Span(f"❌ 建模失敗：{e}", style={"color": _BAD}), no_update
+    acc = r.get("acceptance", {})
+    recall_txt = (f"、事故 recall {acc['drift_recall']}" if acc.get("drift_recall") is not None else "")
+    if not r["saved"]:  # 驗收 FAIL → 不存檔不登錄（治理）
+        return no_update, html.Div([
+            html.Div("⛔ 驗收未過，未存檔：" + acc.get("verdict", ""), style={"color": _BAD, "fontWeight": 500}),
+            html.Div(f"hold-out golden 誤報率 {acc.get('holdout_golden_fpr')}"
+                     f"（{'≤ 目標' if acc.get('fpr_ok') else '過高'}）{recall_txt}",
+                     style={"fontSize": "13px", "color": "#51607a"}),
+            html.Div("請改選更平穩的黃金期、或檢查資料源後重建（不合格模型不予上線）。",
+                     style={"fontSize": "13px", "color": "#51607a"}),
+        ]), no_update
+    m, mod = r["build"], r["model"]
+    disp_name = AssetStore(_REGISTRY).get_process(pid)["display_name"]
+    bundle = {"bundle_path": os.path.join(_MODELS_DIR, mod["path"]), "dataset": dataset,
+              "process_id": pid, "display_name": disp_name}
+    if acc.get("available"):
+        acc_line = html.Div([
+            html.Div("✅ 驗收通過：" + acc["verdict"], style={"color": _OK, "fontWeight": 500}),
+            html.Div(f"hold-out golden 誤報率 {acc['holdout_golden_fpr']}"
+                     f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{recall_txt}",
+                     style={"fontSize": "13px", "color": "#51607a"}),
+            html.Div("（驗收採資料集標準時間連續 hold-out；正式上線應對實際 golden 範圍驗收）",
+                     style={"fontSize": "12px", "color": "#888"}),
+        ])
+    else:
+        acc_line = html.Div(f"（驗收未跑：{acc.get('error', '資料不足')}）", style={"fontSize": "13px", "color": "#888"})
+    msg = html.Div([
+        html.Div(f"✅ 模型已建立並存檔：{disp_name}（v{mod['version']}）", style={"color": _OK, "fontWeight": 500}),
+        html.Div(f"golden {m['golden_range']}，{m['n_golden']} 樣本，指紋健康度 {m['fingerprint_hi']:.3f}"
+                 + ("，含軟測量 Ŷ" if m.get("has_y_health") else ""), style={"fontSize": "13px", "color": "#51607a"}),
+        acc_line,
+        html.Div("按「下一關」查看健康指標。", style={"fontSize": "13px", "color": "#51607a", "marginTop": "4px"}),
+    ])
+    return bundle, msg, _dt.datetime.now().timestamp()
 
 
 def _timeline_fig(pts, threshold):
@@ -454,24 +566,26 @@ def _run(screen, bundle, name, window):
         return no_update, no_update, no_update, no_update
     if not bundle:
         return html.Span("⚠ 請先建立模型", style={"color": "#ef6c00"}), go.Figure(), go.Figure(), no_update
-    name = bundle.get("product") or name  # 從總覽開啟既有模型時，資料源＝該模型 product（非 dropdown）
+    name = bundle.get("dataset") or name      # 製程綁定的資料源（解耦後評分用 dataset，非 process_id）
+    pid = bundle.get("process_id") or name    # incident 綁 process_id（解孤兒事件對齊）
     try:
         tl = demo.score_timeline(bundle["bundle_path"], name, window=int(window or 60))
     except Exception as e:
         return html.Span(f"❌ 模擬失敗：{e}", style={"color": _BAD}), go.Figure(), go.Figure(), no_update
     pts = tl["points"]
     # 增量5：持續告警 → 開事件（同裝置防重複；reuse 已算 pts，不重複評分）。最嚴重窗取 RBC 首位當肇因。
+    worst_top = None
     alarmed = [p for p in pts if p["persisted_alarm"]]
     if alarmed:
         worst = min(alarmed, key=lambda p: p["health_index"])
         try:
             dd = demo.window_detail(bundle["bundle_path"], name, worst["start"], worst["end"], compute_fwer=False,
                                     tag_map=demo.tag_map_for(_MODELS_DIR, name))  # 事件肇因也顯 DCS 位號（紅隊現場工程師）
-            top = dd["rbc_ranking"][0][0] if dd.get("rbc_ranking") else "(見窗下鑽)"
+            worst_top = dd["rbc_ranking"][0][0] if dd.get("rbc_ranking") else "(見窗下鑽)"
         except Exception:
-            top = "(見窗下鑽)"
-        IncidentStore(_INCIDENTS).open_incident(product=name, window=[worst["start"], worst["end"]],
-            health=worst["health_index"], confidence=worst["confidence"], top_cause=top, detected_at=worst.get("ts"))
+            worst_top = "(見窗下鑽)"
+        IncidentStore(_INCIDENTS).open_incident(product=pid, window=[worst["start"], worst["end"]],
+            health=worst["health_index"], confidence=worst["confidence"], top_cause=worst_top, detected_at=worst.get("ts"))
     xs = [p.get("ts") or p["start"] for p in pts]  # wall-clock（對齊 DCS/historian）；ymap 也用
     fig = _timeline_fig(pts, 0.6)
     ymap = go.Figure()
@@ -496,10 +610,22 @@ def _run(screen, bundle, name, window):
                            "showarrow": False, "font": {"color": "#999"}}],
                            xaxis={"visible": False}, yaxis={"visible": False})
     n_alarm = tl["n_alarms"]
-    msg = "⚠ 偵測到 " + str(n_alarm) + " 個告警窗（製程關係偏移）" if n_alarm else "✅ 全程健康"
+    title = bundle.get("display_name") or name
+    msg = f"⚠ {title}：偵測到 {n_alarm} 個告警窗（製程關係偏移）" if n_alarm else f"✅ {title}：全程健康"
     note = (f"　·　高維/長資料集已降採樣為 {tl['n_windows']} 窗顯示" if tl.get("subsampled") else "")
-    status = html.Span([html.Span(msg, style={"color": _BAD if n_alarm else _OK}),
-                        html.Span(note, style={"color": "#888", "fontSize": "13px", "fontWeight": 400})])
+    # 粗→細中層：最嚴重窗摘要（① 健康指標總覽 → ② 為什麼超標 → ③ 點窗看製程參數）
+    worst_line = html.Span()
+    if alarmed:
+        w = min(alarmed, key=lambda p: p["health_index"])
+        worst_line = html.Div(f"② 最嚴重：窗 [{w['start']}:{w['end']}]　主因 {worst_top}　健康 {w['health_index']}"
+                              f"　可信 {w['confidence']}（點下方時間線該紅點看完整肇因與製程參數）",
+                              style={"color": _BAD, "fontSize": "13px", "fontWeight": 400, "marginTop": "4px"})
+    status = html.Div([
+        html.Div("① 健康指標", style={"color": "#94a3b8", "fontSize": "12px"}),
+        html.Span([html.Span(msg, style={"color": _BAD if n_alarm else _OK}),
+                   html.Span(note, style={"color": "#888", "fontSize": "13px", "fontWeight": 400})]),
+        worst_line,
+    ])
     return status, fig, ymap, pts
 
 
@@ -519,7 +645,7 @@ def _recolor(thr, pts):
 def _detail(click, role, bundle, name, window):
     if not bundle or not click:
         return ""
-    name = bundle.get("product") or name  # 與 _run 一致：資料源＝模型 product
+    name = bundle.get("dataset") or name  # 與 _run 一致：評分用製程綁定的資料源
     pt = click["points"][0]
     w = int(window or 60)
     cd = pt.get("customdata")  # 末位為窗 start（x 軸已改 wall-clock，不能用 x 反推）
@@ -694,9 +820,109 @@ def _dl_incidents(_n):
 def _dl_timeline(_n, bundle):
     if not bundle:
         return no_update
-    name = bundle.get("product")
+    name = bundle.get("dataset")
+    fname = bundle.get("process_id") or name
     tl = demo.score_timeline(bundle["bundle_path"], name)
-    return {"content": demo.timeline_to_csv(tl["points"]), "filename": f"{name}_timeline.csv"}
+    return {"content": demo.timeline_to_csv(tl["points"]), "filename": f"{fname}_timeline.csv"}
+
+
+# ---------- 新建製程 / 製程刪除 / 歷史頁（增量7）----------
+@app.callback(Output("newproc-form", "style"), Input("btn-newproc", "n_clicks"),
+              State("newproc-form", "style"), prevent_initial_call=True)
+def _toggle_newproc(_n, st):
+    """切換新建製程表單顯隱。"""
+    shown = (st or {}).get("display") != "none"
+    return {"display": "none" if shown else "block", "margin": "12px 0"}
+
+
+@app.callback(Output("np-status", "children"), Output("registry-refresh", "data", allow_duplicate=True),
+              Output("newproc-form", "style", allow_duplicate=True),
+              Input("btn-np-create", "n_clicks"), State("np-name", "value"), State("np-dataset", "value"),
+              State("np-area", "value"), prevent_initial_call=True)
+def _np_create(_n, name, dataset, area):
+    """建立 placeholder 製程（先佔名，稍後熱插拔模型）。"""
+    nm = (name or "").strip()
+    if not nm:
+        return html.Span("請填製程名稱", style={"color": _BAD}), no_update, no_update
+    at = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        p = demo.create_process(_REGISTRY, display_name=nm, dataset=dataset, at=at, area=(area or "").strip() or None)
+    except Exception as e:
+        return html.Span(f"建立失敗：{e}", style={"color": _BAD}), no_update, no_update
+    return (html.Span(f"✅ 已建立製程「{p['display_name']}」（待建模）", style={"color": _OK}),
+            _dt.datetime.now().timestamp(), {"display": "none", "margin": "12px 0"})
+
+
+@app.callback(Output("registry-refresh", "data", allow_duplicate=True),
+              Input({"type": "del-proc", "pid": ALL}, "n_clicks"), State("event-actor", "value"),
+              prevent_initial_call=True)
+def _del_proc(clicks, actor):
+    """軟刪除製程（完全隱藏，只在歷史可見）+ 關閉孤兒事件。"""
+    t = ctx.triggered_id
+    if not isinstance(t, dict) or not clicks or not any(c for c in clicks if c):
+        return no_update
+    at = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    demo.delete_process(_REGISTRY, t["pid"], reason="使用者刪除", by=(actor or "").strip() or "未具名",
+                        at=at, incidents_path=_INCIDENTS)
+    return _dt.datetime.now().timestamp()
+
+
+@app.callback(Output("history-body", "children"), Input("hist-proc", "data"), Input("registry-refresh", "data"),
+              prevent_initial_call=True)
+def _history_body(pid, _r):
+    """製程歷史/稽核：版本清單（含 acceptance 快照）+ 稽核 log + 服役期事件；已刪製程給還原入口。"""
+    if not pid:
+        return ""
+    try:
+        h = demo.model_history(_REGISTRY, pid, incidents_path=_INCIDENTS)
+    except Exception as e:
+        return html.Span(f"❌ 載入歷史失敗：{e}", style={"color": _BAD})
+    p = h["process"]
+    cur = p.get("current_model_id")
+    head = [html.H3(f"製程歷史：{p['display_name']}", style={"margin": "0 0 4px"}),
+            html.Div(f"資料源 {p['dataset']}　·　狀態 {'已刪除' if p['deleted'] else '使用中'}"
+                     f"　·　現役 {cur or '（無，待建模）'}", style={"color": "#51607a", "fontSize": "13px"})]
+    if p["deleted"]:
+        head.append(_btn("還原此製程", {"type": "restore-proc", "pid": pid}, primary=True, style={"marginTop": "8px"}))
+    # 版本清單（含 acceptance 快照 + 是否現役 + 服役期事件數）
+    inc_by = {}
+    for it in h["incidents"]:
+        inc_by[tuple(it.get("window", []))] = inc_by.get(tuple(it.get("window", [])), 0) + 1
+    vrows = []
+    for m in h["models"]:
+        acc = m.get("acceptance") or {}
+        accs = (f"驗收 {'PASS' if acc.get('passed') else 'FAIL'}（FPR {acc.get('holdout_golden_fpr')}"
+                f"，recall {acc.get('drift_recall')}）") if acc else "（無驗收快照）"
+        tag = "　← 現役" if m["id"] == cur else ("　（已刪）" if m["deleted"] else "")
+        vrows.append(html.Tr([html.Td(f"v{m['version']}{tag}"), html.Td(str(m.get("golden_range"))),
+                              html.Td(accs), html.Td(m["created_at"][:19]), html.Td(m.get("created_by", ""))]))
+    vtable = html.Table([html.Thead(html.Tr([html.Th(x) for x in ("版本", "golden", "驗收快照", "建立時間", "建立者")])),
+                        html.Tbody(vrows)], style={"width": "100%", "fontSize": "13px", "borderCollapse": "collapse",
+                                                   "marginTop": "10px"})
+    # 稽核 log（log存取）
+    arows = [html.Tr([html.Td(a["at"][:19]), html.Td(a["actor"]), html.Td(a["action"]),
+                      html.Td(a.get("detail", ""), style={"color": "#51607a"})]) for a in reversed(h["audit"])]
+    atable = html.Table([html.Thead(html.Tr([html.Th(x) for x in ("時間", "操作者", "動作", "細節")])),
+                        html.Tbody(arows)], style={"width": "100%", "fontSize": "12px", "borderCollapse": "collapse",
+                                                   "marginTop": "10px"})
+    return html.Div(head + [
+        html.Div("模型版本（含驗收快照——判斷是否該回退）", style={"fontWeight": 500, "marginTop": "12px"}), vtable,
+        html.Div(f"服役期事件：{len(h['incidents'])} 件", style={"fontSize": "13px", "color": "#51607a", "marginTop": "10px"}),
+        html.Div("稽核 log（log 存取）", style={"fontWeight": 500, "marginTop": "12px"}), atable,
+    ])
+
+
+@app.callback(Output("registry-refresh", "data", allow_duplicate=True),
+              Input({"type": "restore-proc", "pid": ALL}, "n_clicks"), State("event-actor", "value"),
+              prevent_initial_call=True)
+def _restore_proc(clicks, actor):
+    """還原被軟刪除的製程（歷史頁入口）。"""
+    t = ctx.triggered_id
+    if not isinstance(t, dict) or not clicks or not any(c for c in clicks if c):
+        return no_update
+    at = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    demo.restore_process(_REGISTRY, t["pid"], by=(actor or "").strip() or "未具名", at=at)
+    return _dt.datetime.now().timestamp()
 
 
 if __name__ == "__main__":
