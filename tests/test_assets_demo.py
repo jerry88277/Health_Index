@@ -62,6 +62,22 @@ def test_build_model_accepts_segments_and_auto_spec(tmp_path):
     assert r["saved"] is True and r["model"]["version"] == 1
 
 
+def test_subset_low_recall_warns_not_blocks(tmp_path):
+    """增量9（Rule 7）：監控子集丟掉帶訊號參數 → recall 低但 FPR 合格 → **允許上線 + 警告**，非硬擋。
+
+    WHY：FPR 過高＝誤報→操作員警報疲勞→危險，硬擋；recall 低＝漏抓部分 drift，是使用者「少監控幾個參數」
+    的知情靈敏度取捨，警告不擋。兩準則風險不同、不平均成一個硬閘（Rule 7）。
+    """
+    reg, md = _reg(tmp_path), str(tmp_path)
+    p = demo.create_process(reg, display_name="子集線", dataset="synthetic", at=_AT)
+    feats = [f"x0{i}" for i in range(8)]  # 丟 x08/x09（synthetic drift 訊號所在）→ recall 掉、FPR 仍 0
+    r = demo.build_model_for_process(reg, md, p["id"], golden=(0, 300), window=60, at=_AT, features=feats)
+    assert r["saved"] is True                       # FPR 合格 → 仍存檔（非硬擋）
+    assert r["acceptance"]["fpr_ok"] is True and r["acceptance"]["recall_ok"] is False  # recall 低 → 前端警告
+    from health_index.deploy.bundle import load
+    assert list(load(os.path.join(md, r["model"]["path"])).x_columns) == feats  # 子集確實落地
+
+
 def test_create_build_overview_healthy(tmp_path):
     reg, md = _reg(tmp_path), str(tmp_path)
     p = demo.create_process(reg, display_name="蒸餾A", dataset="synthetic", at=_AT, area="常壓")

@@ -143,17 +143,21 @@ def acceptance_from_dataset(
     window: int | None = None,
     created_at: str = "acceptance",
     compute_fwer: bool = True,
+    features: list[str] | None = None,
     **build_kwargs,
 ) -> AcceptanceReport:
     """便利：用公開資料集做**時間連續 hold-out 驗收**——golden 前段 fit、後段驗 FPR；drift_mask 段評 recall。
 
     時間連續 split（非隨機）以保自相關結構（block-aware 的前提，紅隊；亦避免桶5 §3.3 非平穩假象）。
+    features：監控特徵子集（None→全用）——與建模子集對齊，使 FAIL gate 驗的是實際上線的子集模型。
     """
     from ..adapters import registry
     from .bundle import build_bundle
 
     ds, gt = registry.build(name, **build_kwargs)
     cols = list(gt.x_columns)
+    if features:  # 子集驗收：保資料集原欄序，只取選定欄
+        cols = [c for c in cols if c in features]
     fr = ds.frame
     gm = np.asarray(gt.golden_mask)
     gidx = np.flatnonzero(gm)

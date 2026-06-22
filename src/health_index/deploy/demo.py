@@ -149,6 +149,7 @@ def build_and_save_model(
     models_dir: str = "models",
     created_at: str,
     product: str | None = None,
+    features: list[str] | None = None,
     **build_kwargs,
 ) -> dict:
     """步驟2：以選定 golden 範圍建模 → bundle → 存檔。回傳 bundle 路徑與指紋摘要。
@@ -159,12 +160,18 @@ def build_and_save_model(
         models_dir: bundle 存放目錄（自動建立）。
         created_at: 建模時間字串（git 時間權威；UI 由呼叫端提供）。
         product: 模型/產品識別（None→用 name）。
+        features: 監控特徵子集（None→全用）。存入 bundle.x_columns，scoring 自動只用這些欄（≥2，PCA 需求）。
 
     Returns:
-        {bundle_path, product, golden_range, fingerprint_hi, n_golden}。
+        {bundle_path, product, golden_range, fingerprint_hi, n_golden, x_columns}。
     """
     ds, gt = registry.build(name, **build_kwargs)
     cols = list(gt.x_columns)
+    if features:  # 特徵子集：保資料集原欄序，只取選定欄（≥2）
+        sel = [c for c in cols if c in features]
+        if len(sel) < 2:
+            raise ValueError(f"監控特徵至少需 2 個（選到 {len(sel)}）；可用: {cols}")
+        cols = sel
     fr = ds.frame
     if golden is None:
         gm = np.asarray(gt.golden_mask)
@@ -197,6 +204,7 @@ def build_and_save_model(
         "fingerprint_hi": float(bundle.fingerprint_hi),
         "n_golden": int(len(Xg)),
         "has_y_health": bundle.y_health is not None,  # 有軟量測→demo 可顯示 Ŷ + Y-confirmed 可信度
+        "x_columns": list(cols),  # 實際監控的特徵子集（供前端顯示「監控 7/10 參數」）
     }
 
 
@@ -234,7 +242,7 @@ def score_timeline(
     """
     bundle = load(bundle_path)  # verify=True：指紋不符即拒載
     ds, gt = registry.build(name, **build_kwargs)
-    src = FrameSource(ds.frame, list(gt.x_columns))
+    src = FrameSource(ds.frame, list(bundle.x_columns))  # 用模型實際監控的特徵子集（非全集）→ 子集模型維度對齊
     n = len(ds.frame)
     if max_windows is None:  # 高維逐窗評分昂貴 → 自動降採樣保互動（低維維持高解析）
         max_windows = 40 if len(bundle.x_columns) > 64 else 150
@@ -454,14 +462,16 @@ def window_detail(
     return detail
 
 
-def acceptance_summary(name: str, *, holdout_frac: float = 0.5, window: int = 60, **build_kwargs) -> dict:
+def acceptance_summary(name: str, *, holdout_frac: float = 0.5, window: int = 60,
+                       features: list[str] | None = None, **build_kwargs) -> dict:
     """建模後驗收摘要（製程工程師簽核依據）：時間連續 hold-out 的 golden FPR / drift recall / SPC-blind / 裁決。
 
     接 ``acceptance.acceptance_from_dataset``（取代前端寫死的「可上線」文案）；資料/驗收失敗回 available=False。
-    compute_fwer=False 以維建模流程互動速度（Rule 6）。
+    compute_fwer=False 以維建模流程互動速度（Rule 6）。features：與建模對齊的監控特徵子集（None→全用）。
     """
     try:
-        r = acceptance_from_dataset(name, holdout_frac=holdout_frac, window=window, compute_fwer=False, **build_kwargs)
+        r = acceptance_from_dataset(name, holdout_frac=holdout_frac, window=window, compute_fwer=False,
+                                    features=features, **build_kwargs)
     except Exception as e:  # 資料缺/golden 太短等 → 誠實標不可驗收，不假裝可上線（Rule 12）
         return {"available": False, "error": str(e)}
     return {
@@ -603,23 +613,28 @@ def create_process(registry_path: str, *, display_name: str, dataset: str, by: s
 
 
 def build_model_for_process(registry_path: str, models_dir: str, process_id: str, *, golden, window: int,
-                            by: str = "未具名", at: str, holdout_frac: float = 0.5) -> dict:
+                            by: str = "未具名", at: str, holdout_frac: float = 0.5,
+                            features: list[str] | None = None) -> dict:
     """為製程建立/更換模型（重建基準）：先驗收 gate（FAIL 不存檔不登錄）→ 存版本化 bundle → 登錄 registry。
 
     更換模型＝同製程再呼一次（version 單調+1、舊版自動成歷史、current 指新版）。acceptance 快照存入 model record
     供歷史頁判 rollback（紅隊 RT-3）。golden 可為 (s,e) / "auto" / {"segments":[...]}（接出 mask/auto 選法）。
-    回傳 {saved, acceptance, model?, build?}。
+    features：監控特徵子集（None→全用）；驗收與建模同步用此子集。回傳 {saved, acceptance, model?, build?}。
     """
     store = AssetStore(registry_path)
     p = store.get_process(process_id)
     dataset = p["dataset"]
     garg = golden_arg_from_spec(dataset, golden)  # spec → build 引數（連續/勾選 mask/自動）
     version = int(p["next_version"])  # peek：build_and_save_model 不動 registry，record_build 會給同號（下方 assert）
-    acc = acceptance_summary(dataset, holdout_frac=holdout_frac, window=int(window))
-    if acc.get("available") and not acc["passed"]:  # FAIL 物理擋存檔（治理）
-        return {"saved": False, "acceptance": acc, "process_id": process_id}
+    acc = acceptance_summary(dataset, holdout_frac=holdout_frac, window=int(window), features=features)
+    # 治理 gate（Rule 7：兩準則風險不同，不平均成一個硬擋）：
+    #   FPR 過高＝誤報→操作員警報疲勞→危險，**硬擋不存檔**；
+    #   recall 偏低＝漏抓部分 drift，多半是「監控子集」時丟掉帶訊號的參數——是使用者**知情的靈敏度取捨**，
+    #   **警告不擋**（fpr 合格仍允許上線，前端顯著標示偵測力下降）。
+    if acc.get("available") and not acc.get("fpr_ok", True):
+        return {"saved": False, "acceptance": acc, "process_id": process_id, "block_reason": "fpr"}
     stem = f"{process_id}__v{version}"
-    m = build_and_save_model(dataset, golden=garg, models_dir=models_dir, created_at=at, product=stem)
+    m = build_and_save_model(dataset, golden=garg, models_dir=models_dir, created_at=at, product=stem, features=features)
     rec = store.record_build(process_id, path=f"{stem}.joblib", dataset=dataset, golden_range=m["golden_range"],
                              fingerprint_hi=m["fingerprint_hi"], has_y_health=m["has_y_health"],
                              acceptance=acc if acc.get("available") else None, by=by, at=at)

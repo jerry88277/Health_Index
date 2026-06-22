@@ -41,6 +41,34 @@ def test_build_with_auto_golden(tmp_path):
     assert m["golden_range"] is not None and m["n_golden"] > 0
 
 
+def test_dataset_overview_exposes_precise_x_columns():
+    """增量9：dataset_overview 帶精確 X 欄名（前端說明卡 + 子集勾選用）。"""
+    ov = demo.dataset_overview("synthetic", seed=5, drift_strength=1.2)
+    assert ov["x_columns"] == [f"x0{i}" for i in range(10)]
+
+
+def test_feature_subset_builds_and_scores(tmp_path):
+    """增量9：只監控 10 取 7 的特徵子集——bundle.x_columns 即子集，且 score_timeline 維度對齊不崩。
+
+    WHY：FrameSource 必須用 bundle.x_columns（子集）而非 gt.x_columns（全集），否則 mspc 維度不符。
+    """
+    feats = [f"x0{i}" for i in range(7)]  # 取前 7 個
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t",
+                                  features=feats, seed=5, drift_strength=1.2)
+    assert m["x_columns"] == feats
+    from health_index.deploy.bundle import load
+    assert list(load(m["bundle_path"]).x_columns) == feats  # bundle 存子集
+    tl = demo.score_timeline(m["bundle_path"], "synthetic", window=60, seed=5, drift_strength=1.2)
+    assert tl["points"] and "health_index" in tl["points"][0]  # 子集模型評分不崩（維度對齊）
+
+
+def test_feature_subset_rejects_under_two(tmp_path):
+    """增量9：監控特徵 < 2 → fail loud（PCA 退化，不靜默建出爛模型）。"""
+    with pytest.raises(ValueError):
+        demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t",
+                                  features=["x00"], seed=5, drift_strength=1.2)
+
+
 def test_score_timeline_reflects_dod(tmp_path):
     """marquee：demo 層時間線——golden 健康、drift 告警、乾淨回歸不誤報且與 drift 明確分離。"""
     m = demo.build_and_save_model(

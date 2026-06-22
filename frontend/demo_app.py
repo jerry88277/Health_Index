@@ -230,6 +230,11 @@ def _wizard_view():
                 dcc.Dropdown(id="dataset", clearable=False, value="synthetic", style={"width": "380px"},
                              options=[{"label": catalog.describe(d)["title"], "value": d} for d in demo.available_datasets()]),
                 html.Div(id="overview", style={"marginTop": "10px", "fontSize": "14px", "color": "#51607a"}),
+                html.Div("監控的製程參數（預設全選；可只勾要監控的，例如 10 取 7；至少 2 個）：",
+                         style={"fontWeight": 500, "marginTop": "12px", "marginBottom": "4px", "fontSize": "14px"}),
+                dcc.Checklist(id="feature-sel", options=[], value=[], style={"fontSize": "13px"},
+                              labelStyle={"display": "inline-block", "marginRight": "14px", "marginBottom": "2px"}),
+                html.Div(id="feature-readout", style={"fontSize": "12px", "color": "#51607a", "marginTop": "4px"}),
             ]),
             html.Div(id="wp2", style={"display": "none"}, children=[
                 html.Div("② 選擇訓練資料（黃金基準，代表 A 正常運轉）", style={"fontWeight": 500, "marginBottom": "8px"}),
@@ -473,6 +478,7 @@ def _render_steps(step):
 @app.callback(Output("overview", "children"), Output("golden-range", "max"), Output("golden-range", "value"),
               Output("golden-range", "marks"), Output("nrows", "data"), Output("window", "value"),
               Output("preview-store", "data"), Output("golden-segs", "options"), Output("golden-segs", "value"),
+              Output("feature-sel", "options"), Output("feature-sel", "value"),
               Input("dataset", "value"))
 def _on_dataset(name):
     cat = catalog.describe(name)  # item3：人話說明 + 推薦窗長（讓使用者點下一關就看到對應結果）
@@ -480,7 +486,7 @@ def _on_dataset(name):
         ov = demo.dataset_overview(name)
         pv = demo.dataset_preview(name)  # golden 選擇視覺化資料
     except Exception as e:
-        return html.Span(f"無法載入資料集：{e}", style={"color": _BAD}), 1500, [0, 600], {}, 1500, 60, None, [], []
+        return html.Span(f"無法載入資料集：{e}", style={"color": _BAD}), 1500, [0, 600], {}, 1500, 60, None, [], [], [], []
     n = ov["n_rows"]
     g = ov["golden_suggested"] or [0, int(0.4 * n)]
     marks = {0: "0", n: str(n), n // 2: str(n // 2)}
@@ -496,7 +502,16 @@ def _on_dataset(name):
     seg_opts = [{"label": f"{s['label']} [{s['start']}:{s['end']}]", "value": s["id"]} for s in pv["segments"]]
     gs, ge = g[0], g[1]  # 預設勾選與建議 golden 重疊的 campaign
     seg_val = [s["id"] for s in pv["segments"] if s["start"] < ge and s["end"] > gs]
-    return desc, n, g, marks, n, cat["default_window"], pv, seg_opts, seg_val
+    feat_opts = [{"label": c, "value": c} for c in ov["x_columns"]]  # 精確 X 欄名（可勾選監控子集）
+    feat_val = list(ov["x_columns"])  # 預設全選
+    return desc, n, g, marks, n, cat["default_window"], pv, seg_opts, seg_val, feat_opts, feat_val
+
+
+@app.callback(Output("feature-readout", "children"), Input("feature-sel", "value"), State("feature-sel", "options"))
+def _feature_readout(val, opts):
+    n, mtot = len(val or []), len(opts or [])
+    warn = "" if n >= 2 else "　⚠ 至少需 2 個監控參數"
+    return f"已選 {n}/{mtot} 個參數監控{warn}"
 
 
 def _golden_fig(pv, runs):
@@ -564,12 +579,18 @@ def _auto_golden(_n, name):
               Output("registry-refresh", "data", allow_duplicate=True),
               Input("btn-build", "n_clicks"), State("wiz-proc", "data"), State("wiz-name", "value"),
               State("dataset", "value"), State("golden-spec", "data"), State("golden-range", "value"),
-              State("window", "value"), prevent_initial_call=True)
-def _build(_n, wp, wiz_name, name, gspec, grange, window):
+              State("window", "value"), State("feature-sel", "value"), State("feature-sel", "options"),
+              prevent_initial_call=True)
+def _build(_n, wp, wiz_name, name, gspec, grange, window, feats, feat_opts):
     """建立/更換模型（registry）：全新製程先建 placeholder 再建模；既有製程直接登錄新版本。FAIL gate 物理擋存檔。"""
     wp = wp or {"mode": "new"}
     at = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
     golden = gspec or {"range": list(grange or [0, 600])}  # 連續/勾選/自動 規格；無則退回 RangeSlider 連續
+    feats = feats or []
+    if feats and len(feats) < 2:  # 子集至少 2（PCA 需求）——前端先擋，給友善訊息
+        return no_update, html.Span("❌ 監控參數至少需選 2 個", style={"color": _BAD}), no_update
+    all_feats = [o["value"] for o in (feat_opts or [])]
+    features = None if (not feats or set(feats) == set(all_feats)) else feats  # 全選→None（全用）；子集→傳清單
     try:
         if wp.get("mode") == "build" and wp.get("process_id"):
             pid, dataset = wp["process_id"], wp["dataset"]
@@ -578,18 +599,17 @@ def _build(_n, wp, wiz_name, name, gspec, grange, window):
             disp = (wiz_name or "").strip() or catalog.describe(dataset)["title"]
             pid = demo.create_process(_REGISTRY, display_name=disp, dataset=dataset, at=at)["id"]
         r = demo.build_model_for_process(_REGISTRY, _MODELS_DIR, pid, golden=golden,
-                                         window=int(window or 60), at=at)
+                                         window=int(window or 60), at=at, features=features)
     except Exception as e:
         return no_update, html.Span(f"❌ 建模失敗：{e}", style={"color": _BAD}), no_update
     acc = r.get("acceptance", {})
     recall_txt = (f"、事故 recall {acc['drift_recall']}" if acc.get("drift_recall") is not None else "")
-    if not r["saved"]:  # 驗收 FAIL → 不存檔不登錄（治理）
+    if not r["saved"]:  # FPR 過高 → 物理擋存檔（誤報治理；recall 低改走警告不擋）
         return no_update, html.Div([
-            html.Div("⛔ 驗收未過，未存檔：" + acc.get("verdict", ""), style={"color": _BAD, "fontWeight": 500}),
-            html.Div(f"hold-out golden 誤報率 {acc.get('holdout_golden_fpr')}"
-                     f"（{'≤ 目標' if acc.get('fpr_ok') else '過高'}）{recall_txt}",
+            html.Div("⛔ 誤報率過高，未存檔：" + acc.get("verdict", ""), style={"color": _BAD, "fontWeight": 500}),
+            html.Div(f"hold-out golden 誤報率 {acc.get('holdout_golden_fpr')}（過高）{recall_txt}",
                      style={"fontSize": "13px", "color": "#51607a"}),
-            html.Div("請改選更平穩的黃金期、或檢查資料源後重建（不合格模型不予上線）。",
+            html.Div("請改選更平穩的黃金期、或檢查資料源後重建（會誤報的模型不予上線）。",
                      style={"fontSize": "13px", "color": "#51607a"}),
         ]), no_update
     m, mod = r["build"], r["model"]
@@ -607,11 +627,22 @@ def _build(_n, wp, wiz_name, name, gspec, grange, window):
         ])
     else:
         acc_line = html.Div(f"（驗收未跑：{acc.get('error', '資料不足')}）", style={"fontSize": "13px", "color": "#888"})
+    # recall 低警告（多半因監控子集丟掉帶訊號的參數）——FPR 合格仍上線，但顯著標示偵測力下降（知情取捨）
+    recall_warn = html.Span()
+    if acc.get("available") and acc.get("recall_ok") is False:
+        recall_warn = html.Div(
+            f"⚠ 事故 recall 偏低（{acc.get('drift_recall')}）：此監控組合對已知 drift 偵測力下降，"
+            "多因排除了帶飄移訊號的參數。FPR 合格故允許上線，建議補回關鍵參數或全參數監控。",
+            style={"background": "#fff7ed", "border": "1px solid #fdba74", "color": "#b26a00",
+                   "padding": "8px 12px", "borderRadius": "8px", "fontSize": "13px", "margin": "6px 0"})
     msg = html.Div([
         html.Div(f"✅ 模型已建立並存檔：{disp_name}（v{mod['version']}）", style={"color": _OK, "fontWeight": 500}),
-        html.Div(f"golden {m['golden_range']}，{m['n_golden']} 樣本，指紋健康度 {m['fingerprint_hi']:.3f}"
+        html.Div(f"golden {m['golden_range']}，{m['n_golden']} 樣本，監控 {len(m.get('x_columns', []))} 參數"
+                 f"（{'、'.join(m.get('x_columns', [])[:6])}{'…' if len(m.get('x_columns', [])) > 6 else ''}）"
+                 f"，指紋健康度 {m['fingerprint_hi']:.3f}"
                  + ("，含軟測量 Ŷ" if m.get("has_y_health") else ""), style={"fontSize": "13px", "color": "#51607a"}),
         acc_line,
+        recall_warn,
         html.Div("按「下一關」查看健康指標。", style={"fontSize": "13px", "color": "#51607a", "marginTop": "4px"}),
     ])
     return bundle, msg, _dt.datetime.now().timestamp()
