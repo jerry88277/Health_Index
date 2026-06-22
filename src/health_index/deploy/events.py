@@ -30,6 +30,7 @@ class Incident:
     confidence: float
     top_cause: str            # RBC 首位肇因變數
     severity: str             # info / warning / critical
+    kind: str = "process"     # 增量8：process（X 側製程異常）/ quality（Y 側品質飄移）——分流防重複、分開閉環
     status: str = OPEN
     ack_by: str | None = None
     ack_at: str | None = None
@@ -78,18 +79,22 @@ class IncidentStore:
 
     def open_incident(
         self, *, product: str, window, health: float, confidence: float, top_cause: str,
-        detected_at: str | None = None, severity: str | None = None,
+        detected_at: str | None = None, severity: str | None = None, kind: str = "process",
     ) -> Incident:
-        """開案；同 product 已有 active(open/ack) 事件則回該事件（防重複，不開新案）。"""
+        """開案；同 (product, kind) 已有 active(open/ack) 事件則回該事件（防重複，不開新案）。
+
+        kind 分流（增量8）：製程異常(process)與品質飄移(quality)各自一條 episode，不互相壓制——同一製程
+        可同時有一個製程事件與一個品質事件。
+        """
         items = self._load()
         for it in items:
-            if it["product"] == product and it["status"] in _ACTIVE:
-                return Incident(**it)  # 既有未結 episode，沿用
+            if it["product"] == product and it.get("kind", "process") == kind and it["status"] in _ACTIVE:
+                return Incident(**{**{"kind": "process"}, **it})  # 既有未結 episode，沿用（舊檔無 kind→process）
         inc = Incident(
             id=self._next_id(items), product=str(product), detected_at=_iso(detected_at),
             window=[int(window[0]), int(window[1])], health=round(float(health), 4),
             confidence=round(float(confidence), 4), top_cause=str(top_cause),
-            severity=severity or severity_of(health, confidence),
+            severity=severity or severity_of(health, confidence), kind=str(kind),
         )
         items.append(asdict(inc))
         self._save(items)

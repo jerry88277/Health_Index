@@ -261,8 +261,14 @@ def score_timeline(
 
     m = bundle.health.mspc_
     yh = bundle.y_health  # L3 映射模組（軟測量）；有則每窗附 Ŷ vs 實際 Y（供對照子圖）
+    cfg = bundle.config
     yvals = ds.frame[Y_VALUE].to_numpy(dtype=float) if (yh is not None and Y_VALUE in ds.frame.columns) else None
     ts_col = ds.frame[TIMESTAMP] if TIMESTAMP in ds.frame.columns else None  # wall-clock（對齊 DCS/historian）
+    gy_mu = gy_sd = None  # 增量8：golden 期預測品質 Ŷ 基準（供 Ŷ 水準漂移 z）
+    if yh is not None and gm.any():
+        Xg = ds.frame.loc[gm, list(bundle.x_columns)].to_numpy(dtype=float)
+        gyh = yh.ss_.predict(Xg)
+        gy_mu, gy_sd = float(np.mean(gyh)), float(np.std(gyh))
     points = []
     for s in scores:
         Xw = src.x_slice(s.start, s.end)
@@ -284,18 +290,40 @@ def score_timeline(
         }
         if yh is not None:  # L3 映射：Ŷ + conformal 帶 + 實際 Y（窗內有觀測才有）→ Ŷ vs Y 對照
             yhat = yh.ss_.predict(Xw)
-            pt["yhat_mean"] = round(float(np.mean(yhat)), 4)
+            wy_mean = float(np.mean(yhat))
+            pt["yhat_mean"] = round(wy_mean, 4)
             pt["yhat_band"] = round(float(np.mean(yh._band_half(Xw))), 4)
-            yw = yvals[s.start : s.end]
+            yw = yvals[s.start : s.end] if yvals is not None else np.array([])
             obs = np.isfinite(yw)
             pt["y_actual_mean"] = round(float(yw[obs].mean()), 4) if bool(obs.any()) else None
+            # 增量8 品質維度——① Ŷ 水準漂移（預測品質飄，半隱性）：窗均值相對 golden Ŷ 的 z（golden-σ）
+            z = (wy_mean - gy_mu) / (gy_sd + 1e-9) if (gy_mu is not None and gy_sd is not None) else None
+            pt["yhat_drift_z"] = round(z, 3) if z is not None else None
+            # ② X→Y 殘差超界（真隱性：X 正常、實際 Y 偏）——需窗內有足夠 Y 觀測才可判，否則誠實標 None/False
+            mh, yflag = None, False
+            if int(obs.sum()) >= cfg.y_map_min_obs:
+                mh = yh.map_health(Xw, yw)
+                yflag = bool(yh.y_flagged(Xw, yw))
+            pt["y_map_health"] = round(mh, 4) if mh is not None else None
+            pt["y_flagged"] = yflag
+            pt["y_observed"] = bool(obs.any())
+            level_drift = z is not None and abs(z) >= cfg.y_trend_z_max
+            pt["y_quality_raw"] = bool(level_drift or yflag)  # 任一品質訊號（Ŷ 漂移 或 殘差超界）
         points.append(pt)
+    if yh is not None:  # Y 品質持續告警：連續 k 窗 raw（濾單點，類比 X 側 persistence）
+        k, run = cfg.drift_persistence_k, 0
+        for pt in points:
+            run = run + 1 if pt.get("y_quality_raw") else 0
+            pt["y_quality_persisted"] = bool(run >= k)
     return {
         "product": bundle.product,
         "window": int(window),
         "points": points,
         "n_alarms": int(sum(p["persisted_alarm"] for p in points)),
         "has_y_mapping": yh is not None,  # 前端據此決定是否畫 Ŷ vs Y 子圖
+        "n_quality_alarms": int(sum(p.get("y_quality_persisted", False) for p in points)),  # 增量8 品質飄移持續告警窗
+        "golden_yhat_mean": round(gy_mu, 4) if gy_mu is not None else None,
+        "golden_yhat_std": round(gy_sd, 4) if gy_sd is not None else None,
         "subsampled": subsampled,         # 高維/長資料集降採樣顯示（前端標示）
         "n_windows": len(points),
     }
@@ -391,7 +419,8 @@ def window_detail(
         yw = ds.frame.iloc[int(start) : int(end)][Y_VALUE].to_numpy(dtype=float)
         obs = np.isfinite(yw)
         n_obs = int(obs.sum())
-        ss_block: dict = {"available": True, "n_y_obs": n_obs, "cp_available": bool(yh.ss_.cp_available)}
+        ss_block: dict = {"available": True, "n_y_obs": n_obs, "cp_available": bool(yh.ss_.cp_available),
+                          "y_flagged": False}
         if n_obs > 0:
             Xo = X[obs]
             yhat = yh.ss_.predict(Xo)
@@ -403,6 +432,7 @@ def window_detail(
                     "y_actual_mean": round(float(np.mean(yw[obs])), 4),
                     "band_half_mean": round(float(np.mean(band)), 4),
                     "map_health": round(float(mh), 4) if mh is not None else None,
+                    "y_flagged": bool(yh.y_flagged(X, yw)),  # 增量8：品質旗標（殘差超界＝X→Y 斷，隱性品質飄移）
                 }
             )
         detail["soft_sensor"] = ss_block
@@ -538,7 +568,7 @@ def incidents_to_csv(incidents: list[dict]) -> str:
     import csv
     import io
 
-    cols = ["id", "product", "detected_at", "severity", "status", "health", "confidence", "top_cause",
+    cols = ["id", "product", "kind", "detected_at", "severity", "status", "health", "confidence", "top_cause",
             "ack_by", "ack_at", "closed_at", "mttr_sec", "close_note"]
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")

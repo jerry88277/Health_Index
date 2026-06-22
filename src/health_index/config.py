@@ -61,6 +61,7 @@ class Config:
     y_fusion_weights: tuple = (1.0, 1.0)  # (映射健康, 分布健康) 融合權重；分布健康僅多維品質有
     y_flag_threshold: float = 0.5  # 任一 Y 健康分量 < 此 → y_flagged（安全網，類比 X 側 hard-gate；
                                    # 抓分量塌陷如換產品 dist→0，即使融合均值被另一分量稀釋未過閾）
+    y_trend_z_max: float = 3.0   # 增量8：預測品質 Ŷ 窗均值相對 golden Ŷ 的水準漂移（golden-σ 單位）超此→品質飄移旗標（3σ SPC）
 
     # --- L4 漂移 ---
     drift_window: int = 60          # 漂移偵測窗大小（與檢定力下限相關，AC-2）

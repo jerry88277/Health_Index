@@ -33,7 +33,7 @@ def test_incidents_to_csv_has_header_and_rows():
     inc = [{"id": "INC-0001", "product": "A", "detected_at": "t", "severity": "critical", "status": "closed",
             "health": 0.4, "confidence": 0.9, "top_cause": "T1", "mttr_sec": 1800.0, "close_note": "ok"}]
     csv = demo.incidents_to_csv(inc)
-    assert "id,product,detected_at" in csv and "INC-0001" in csv and "1800.0" in csv
+    assert "id,product,kind,detected_at" in csv and "INC-0001" in csv and "1800.0" in csv
 
 
 def test_timeline_to_csv_has_header():

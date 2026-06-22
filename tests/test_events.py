@@ -78,6 +78,18 @@ def test_false_alarm_excluded_from_mttr_and_roi(tmp_path):
     assert r["n_critical_events"] == 1  # A(誤報)排除，只剩 B
 
 
+def test_kind_separates_process_and_quality_episodes(tmp_path):
+    """增量8：品質(quality)與製程(process)事件各自一條 episode（同 product 不互壓）；同 kind 才防重複。"""
+    s = _store(tmp_path)
+    p1 = s.open_incident(product="A", window=[0, 60], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0)
+    q1 = s.open_incident(product="A", window=[0, 60], health=0.5, confidence=0.9, top_cause="品質飄移",
+                         detected_at=_T0, kind="quality")
+    assert p1.id != q1.id and p1.kind == "process" and q1.kind == "quality"  # 不互壓，兩條並存
+    p2 = s.open_incident(product="A", window=[60, 120], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0)
+    assert p2.id == p1.id           # 同 (product, kind) 仍防重複
+    assert s.stats()["active"] == 2  # 製程 + 品質 各一
+
+
 def test_severity_rule():
     """確定性嚴重度：低健康+高可信=critical；低可信=warning（存疑不誇大）；健康=info。"""
     assert severity_of(0.40, 0.9) == "critical"

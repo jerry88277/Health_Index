@@ -669,6 +669,15 @@ def _run(screen, bundle, name, window):
             worst_top = "(見窗下鑽)"
         IncidentStore(_INCIDENTS).open_incident(product=pid, window=[worst["start"], worst["end"]],
             health=worst["health_index"], confidence=worst["confidence"], top_cause=worst_top, detected_at=worst.get("ts"))
+    # 增量8：Y 側品質飄移持續告警 → 開「品質」事件（kind=quality，與製程事件分流不互壓；防重複）
+    q_alarmed = [p for p in pts if p.get("y_quality_persisted")]
+    if q_alarmed:
+        qw = min(q_alarmed, key=lambda p: p["y_map_health"] if p.get("y_map_health") is not None else 1.0)
+        mh, z = qw.get("y_map_health"), qw.get("yhat_drift_z")
+        qcause = "品質飄移：X→Y 殘差超界（X 正常、實際 Y 偏，隱性）" if mh is not None else "品質飄移：預測品質 Ŷ 水準偏移"
+        qh = mh if mh is not None else max(0.0, round(1 - min(abs(z or 0) / 9.0, 1.0), 3))
+        IncidentStore(_INCIDENTS).open_incident(product=pid, window=[qw["start"], qw["end"]], health=qh,
+            confidence=qw.get("confidence", 0.0), top_cause=qcause, detected_at=qw.get("ts"), kind="quality")
     xs = [p.get("ts") or p["start"] for p in pts]  # wall-clock（對齊 DCS/historian）；ymap 也用
     fig = _timeline_fig(pts, 0.6)
     ymap = go.Figure()
@@ -685,7 +694,14 @@ def _run(screen, bundle, name, window):
         if ya:
             ymap.add_trace(go.Scatter(x=[a[0] for a in ya], y=[a[1] for a in ya], mode="markers",
                            marker={"color": _BAD, "size": 6}, name="實際 Y（量測到達）"))
-        ymap.update_layout(title="L3 軟測量：Ŷ 預測 vs 實際 Y（帶外＝X→Y 關係偏移）",
+        gy = tl.get("golden_yhat_mean")  # 增量8：golden 期預測品質基準線（Ŷ 水準漂移的參考）
+        if gy is not None:
+            ymap.add_hline(y=gy, line_dash="dot", line_color=_OK, annotation_text="golden Ŷ 基準")
+        qx = [(p.get("ts") or p["start"], p.get("yhat_mean")) for p in pts if p.get("y_quality_persisted")]
+        if qx:  # 品質飄移告警窗標記（多一個維度監控）
+            ymap.add_trace(go.Scatter(x=[a[0] for a in qx], y=[a[1] for a in qx], mode="markers",
+                           marker={"symbol": "x", "color": _BAD, "size": 13}, name="品質飄移告警"))
+        ymap.update_layout(title="L3 軟測量：Ŷ 預測 vs 實際 Y（帶外／✕＝品質飄移：X→Y 關係偏移或 Ŷ 水準漂移）",
                            xaxis={"title": "時間"}, yaxis={"title": "Y（軟量測標的）"},
                            height=300, legend={"orientation": "h"})
     else:
@@ -703,11 +719,25 @@ def _run(screen, bundle, name, window):
         worst_line = html.Div(f"② 最嚴重：窗 [{w['start']}:{w['end']}]　主因 {worst_top}　健康 {w['health_index']}"
                               f"　可信 {w['confidence']}（點下方時間線該紅點看完整肇因與製程參數）",
                               style={"color": _BAD, "fontSize": "13px", "fontWeight": 400, "marginTop": "4px"})
+    # 增量8 ③ 品質維度（Y 側）：預測品質 Ŷ 偏移 / X→Y 殘差超界 → 防量產次級品
+    q_line = html.Span()
+    if tl.get("has_y_mapping"):
+        n_quality = tl.get("n_quality_alarms", 0)
+        n_obs = sum(1 for p in pts if p.get("y_observed"))
+        sparse = n_obs < max(1, len(pts)) * 0.5  # Y 量測稀疏 → 誠實標隱性飄移只在有 Y 樣本的窗可判
+        if n_quality:
+            qtxt = f"③ 品質維度：⚠ {n_quality} 個品質飄移窗（預測品質 Ŷ 偏移／X→Y 殘差超界）——恐量產次級品，建議查品質標的"
+            qcol = _BAD
+        else:
+            qtxt = "③ 品質維度：✅ 預測品質穩定" + ("（Y 量測稀疏：隱性品質飄移僅在 Y 樣本到達的窗可判）" if sparse else "")
+            qcol = _OK if not sparse else "#b26a00"
+        q_line = html.Div(qtxt, style={"color": qcol, "fontSize": "13px", "marginTop": "6px"})
     status = html.Div([
         html.Div("① 健康指標", style={"color": "#94a3b8", "fontSize": "12px"}),
         html.Span([html.Span(msg, style={"color": _BAD if n_alarm else _OK}),
                    html.Span(note, style={"color": "#888", "fontSize": "13px", "fontWeight": 400})]),
         worst_line,
+        q_line,
     ])
     return status, fig, ymap, pts
 
@@ -754,9 +784,10 @@ def _detail(click, role, bundle, name, window):
         ss_line = "軟測量（Ŷ / 可信度）：此模型無 Y 標的（未提供軟量測）。"
     elif ss.get("n_y_obs", 0) > 0:
         mh = ss.get("map_health")
+        qflag = "　⚠ 品質飄移旗標：殘差超界（X 正常但實際 Y 偏，X→Y 關係斷）" if ss.get("y_flagged") else ""
         ss_line = (f"軟測量：Ŷ {ss['yhat_mean']}　實際 Y {ss['y_actual_mean']}　±帶 {ss['band_half_mean']}"
                    f"（{'conformal' if ss['cp_available'] else 'std 近似'}，{ss['n_y_obs']} 筆 Y）"
-                   f"　X→Y 可信度：{mh if mh is not None else '觀測不足'}")
+                   f"　X→Y 可信度：{mh if mh is not None else '觀測不足'}{qflag}")
     else:
         ss_line = "軟測量：本窗尚無 Y 到達（延遲量測）——待 Y 落地後給 Ŷ 與 X→Y 可信度。"
     v = d.get("verdict", {})
@@ -850,8 +881,12 @@ def _events_body(screen, _r, _t, roi_loss, flt):
                             style={"width": "130px", "display": "inline-block", "marginRight": "8px", "verticalAlign": "middle"}))
                 acts.append(_btn("關閉", {"type": "close-inc", "id": it["id"]}, primary=True, style={"padding": "5px 12px"}))
             mttr_line = f"MTTR {it['mttr_sec'] / 3600:.2f} 小時｜處置：{it.get('close_note')}" if it.get("mttr_sec") else ""
+            kind = it.get("kind", "process")  # 增量8：品質 vs 製程 事件分流標籤
+            ktxt, kcol = ("品質飄移", "#7c3aed") if kind == "quality" else ("製程異常", _ACCENT)
             cards.append(_card([
                 html.Div([html.Span(it["id"] + "　", style={"fontWeight": 500}),
+                          html.Span(ktxt, style={"background": kcol, "color": "#fff", "borderRadius": "6px",
+                                    "padding": "1px 8px", "fontSize": "12px", "marginRight": "8px"}),
                           html.Span(it["severity"], style={"color": sev, "fontWeight": 500}),
                           html.Span("　" + it["status"], style={"color": "#51607a"})]),
                 html.Div(f"{it['product']}｜肇因 {it['top_cause']}｜健康 {it['health']}｜可信 {it['confidence']}｜{it['detected_at']}",
