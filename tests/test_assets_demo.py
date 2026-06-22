@@ -81,7 +81,7 @@ def test_subset_low_recall_warns_not_blocks(tmp_path):
 def test_create_build_overview_healthy(tmp_path):
     reg, md = _reg(tmp_path), str(tmp_path)
     p = demo.create_process(reg, display_name="蒸餾A", dataset="synthetic", at=_AT, area="常壓")
-    r = demo.build_model_for_process(reg, md, p["id"], golden=(0, 600), window=60, at=_AT)
+    r = demo.build_model_for_process(reg, md, p["id"], golden=(0, 300), window=60, at=_AT)
     assert r["saved"] is True and r["model"]["version"] == 1
     assert os.path.exists(os.path.join(md, f"{p['id']}__v1.joblib"))  # 版本化 bundle 落地
     ov = demo.assets_overview(reg, md, window=60)
@@ -104,8 +104,8 @@ def test_swap_model_bumps_version_and_current(tmp_path):
     """更換模型＝重建基準：version 單調+1、current 指新版、舊版成歷史版本。"""
     reg, md = _reg(tmp_path), str(tmp_path)
     p = demo.create_process(reg, display_name="A", dataset="synthetic", at=_AT)
-    demo.build_model_for_process(reg, md, p["id"], golden=(0, 600), window=60, at=_AT)
-    r2 = demo.build_model_for_process(reg, md, p["id"], golden=(0, 700), window=60, at=_AT)
+    demo.build_model_for_process(reg, md, p["id"], golden=(0, 300), window=60, at=_AT)
+    r2 = demo.build_model_for_process(reg, md, p["id"], golden=(0, 250), window=60, at=_AT)
     assert r2["saved"] and r2["model"]["version"] == 2
     assert AssetStore(reg).get_process(p["id"])["current_model_id"] == r2["model"]["id"]
 
@@ -114,7 +114,7 @@ def test_delete_process_hidden_and_closes_orphan(tmp_path):
     """軟刪製程：總覽完全隱藏 + 孤兒 active 事件強制關閉（解 KPI 虛報）。"""
     reg, md, inc = _reg(tmp_path), str(tmp_path), str(tmp_path / "inc.json")
     p = demo.create_process(reg, display_name="A", dataset="synthetic", at=_AT)
-    demo.build_model_for_process(reg, md, p["id"], golden=(0, 600), window=60, at=_AT)
+    demo.build_model_for_process(reg, md, p["id"], golden=(0, 300), window=60, at=_AT)
     IncidentStore(inc).open_incident(product=p["id"], window=[0, 60], health=0.4, confidence=0.9, top_cause="x1")
     demo.delete_process(reg, p["id"], reason="停用", at=_AT, incidents_path=inc)
     ov = demo.assets_overview(reg, md, incidents_path=inc, window=60)
@@ -126,7 +126,7 @@ def test_model_history_merges_versions_acceptance_incidents(tmp_path):
     """歷史頁：版本清單(含 acceptance 快照) + audit log + 服役期 incidents（紅隊 RT-3）。"""
     reg, md, inc = _reg(tmp_path), str(tmp_path), str(tmp_path / "inc.json")
     p = demo.create_process(reg, display_name="A", dataset="synthetic", at=_AT)
-    demo.build_model_for_process(reg, md, p["id"], golden=(0, 600), window=60, at=_AT)
+    demo.build_model_for_process(reg, md, p["id"], golden=(0, 300), window=60, at=_AT)
     IncidentStore(inc).open_incident(product=p["id"], window=[0, 60], health=0.4, confidence=0.9, top_cause="x1")
     h = demo.model_history(reg, p["id"], incidents_path=inc)
     assert len(h["models"]) == 1 and h["models"][0].get("acceptance") is not None

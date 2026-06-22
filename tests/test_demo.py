@@ -69,6 +69,17 @@ def test_feature_subset_rejects_under_two(tmp_path):
                                   features=["x00"], seed=5, drift_strength=1.2)
 
 
+def test_acceptance_reflects_user_golden():
+    """增量9 根因修復：驗收吃使用者選的 golden（非固定真值段）——季節性/時序資料圈平穩段即可過 FPR gate。
+
+    WHY：tep_tp 真值段 0:3000 含非平穩尾段 → 固定驗收恆 FPR-FAIL（不管使用者怎麼選）；改吃使用者 golden 後，
+    圈平穩 0:1200 → FPR 過。讓「精靈選 golden」對 gate 終於有意義（先前對 gate 是裝飾）。
+    """
+    full = demo.acceptance_summary("tep_tp", window=60, golden=(0, 3000))
+    stationary = demo.acceptance_summary("tep_tp", window=60, golden=(0, 1200))
+    assert full["fpr_ok"] is False and stationary["fpr_ok"] is True  # 同資料集、僅 golden 段不同 → gate 結果不同
+
+
 def test_score_timeline_reflects_dod(tmp_path):
     """marquee：demo 層時間線——golden 健康、drift 告警、乾淨回歸不誤報且與 drift 明確分離。"""
     m = demo.build_and_save_model(

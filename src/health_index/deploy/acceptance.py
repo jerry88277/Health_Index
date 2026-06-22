@@ -144,12 +144,16 @@ def acceptance_from_dataset(
     created_at: str = "acceptance",
     compute_fwer: bool = True,
     features: list[str] | None = None,
+    golden=None,
     **build_kwargs,
 ) -> AcceptanceReport:
     """便利：用公開資料集做**時間連續 hold-out 驗收**——golden 前段 fit、後段驗 FPR；drift_mask 段評 recall。
 
     時間連續 split（非隨機）以保自相關結構（block-aware 的前提，紅隊；亦避免桶5 §3.3 非平穩假象）。
     features：監控特徵子集（None→全用）——與建模子集對齊，使 FAIL gate 驗的是實際上線的子集模型。
+    golden：使用者選的 golden 規格（(s,e)/bool mask/'auto'/比例；None→用資料集真值 golden_mask）。**驗收即驗
+        實際要上線的模型**——使用者圈一段更平穩的 golden 時，FPR 在該段上評（解決固定 golden_mask 含非平穩
+        尾段→恆 FAIL 的脫鉤；季節性/時序資料如 steel/tep_tp 靠此選平穩段過關）。
     """
     from ..adapters import registry
     from .bundle import build_bundle
@@ -159,7 +163,12 @@ def acceptance_from_dataset(
     if features:  # 子集驗收：保資料集原欄序，只取選定欄
         cols = [c for c in cols if c in features]
     fr = ds.frame
-    gm = np.asarray(gt.golden_mask)
+    if golden is not None:  # 驗收對齊使用者選的 golden（非固定真值段）
+        from ..adapters.dataframe import _resolve_golden
+
+        gm = np.asarray(_resolve_golden(golden, len(fr), x_arr=fr[cols].to_numpy(dtype=float)))
+    else:
+        gm = np.asarray(gt.golden_mask)
     gidx = np.flatnonzero(gm)
     cut = gidx[0] + int(holdout_frac * len(gidx))
     fit_idx = gidx[gidx < cut]

@@ -463,15 +463,16 @@ def window_detail(
 
 
 def acceptance_summary(name: str, *, holdout_frac: float = 0.5, window: int = 60,
-                       features: list[str] | None = None, **build_kwargs) -> dict:
+                       features: list[str] | None = None, golden=None, **build_kwargs) -> dict:
     """建模後驗收摘要（製程工程師簽核依據）：時間連續 hold-out 的 golden FPR / drift recall / SPC-blind / 裁決。
 
     接 ``acceptance.acceptance_from_dataset``（取代前端寫死的「可上線」文案）；資料/驗收失敗回 available=False。
     compute_fwer=False 以維建模流程互動速度（Rule 6）。features：與建模對齊的監控特徵子集（None→全用）。
+    golden：與建模對齊的 golden 規格（None→資料集真值段）——驗收即驗實際上線的模型（季節性資料選平穩段過關）。
     """
     try:
         r = acceptance_from_dataset(name, holdout_frac=holdout_frac, window=window, compute_fwer=False,
-                                    features=features, **build_kwargs)
+                                    features=features, golden=golden, **build_kwargs)
     except Exception as e:  # 資料缺/golden 太短等 → 誠實標不可驗收，不假裝可上線（Rule 12）
         return {"available": False, "error": str(e)}
     return {
@@ -626,7 +627,8 @@ def build_model_for_process(registry_path: str, models_dir: str, process_id: str
     dataset = p["dataset"]
     garg = golden_arg_from_spec(dataset, golden)  # spec → build 引數（連續/勾選 mask/自動）
     version = int(p["next_version"])  # peek：build_and_save_model 不動 registry，record_build 會給同號（下方 assert）
-    acc = acceptance_summary(dataset, holdout_frac=holdout_frac, window=int(window), features=features)
+    # 驗收對齊使用者選的 golden + 子集（非固定真值段）→ 季節性/時序資料圈平穩段即可過 FPR gate
+    acc = acceptance_summary(dataset, holdout_frac=holdout_frac, window=int(window), features=features, golden=garg)
     # 治理 gate（Rule 7：兩準則風險不同，不平均成一個硬擋）：
     #   FPR 過高＝誤報→操作員警報疲勞→危險，**硬擋不存檔**；
     #   recall 偏低＝漏抓部分 drift，多半是「監控子集」時丟掉帶訊號的參數——是使用者**知情的靈敏度取捨**，
