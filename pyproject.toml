@@ -14,6 +14,7 @@ dependencies = [
   "pandas>=1.5",
   "POT>=0.9",
   "ruptures>=1.1",
+  "PyWavelets>=1.4",
 ]
 
 [project.optional-dependencies]
