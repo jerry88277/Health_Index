@@ -142,6 +142,155 @@ def resolve_golden_runs(name: str, spec, **build_kwargs) -> dict:
     return {"runs": runs, "n_selected": int(m.sum())}
 
 
+def _mask_runs(m) -> list[list[int]]:
+    """bool mask → 連續區間 runs（全域索引）。"""
+    m = np.asarray(m, dtype=bool)
+    n = len(m)
+    runs, i = [], 0
+    while i < n:
+        if m[i]:
+            j = i
+            while j < n and m[j]:
+                j += 1
+            runs.append([int(i), int(j)])
+            i = j
+        else:
+            i += 1
+    return runs
+
+
+def _downsample_traces(X: np.ndarray, qs: int, qe: int, cols: list, max_points: int) -> dict:
+    """query 區 [qs,qe) 逐參數降採樣序列（分箱均值；保互動）。回傳 {param: {x:[全域 idx], v:[值]}}。"""
+    seg = X[qs:qe]
+    length = qe - qs
+    if length <= max_points:
+        xs = list(range(qs, qe))
+        return {c: {"x": xs, "v": [round(float(v), 4) for v in seg[:, j]]} for j, c in enumerate(cols)}
+    edges = np.linspace(0, length, max_points + 1).astype(int)
+    xs = [int(qs + (edges[b] + edges[b + 1]) // 2) for b in range(max_points) if edges[b + 1] > edges[b]]
+    out = {}
+    for j, c in enumerate(cols):
+        vs = [round(float(np.mean(seg[int(edges[b]):int(edges[b + 1]), j])), 4)
+              for b in range(max_points) if edges[b + 1] > edges[b]]
+        out[c] = {"x": xs, "v": vs}
+    return out
+
+
+def _round_cell(c: dict) -> dict:
+    """偏離 cell JSON 安全化：NaN→None（JSON 無 NaN）、四捨五入。"""
+    z, p = c["z"], c["p_raw"]
+    return {
+        "seg_index": int(c["seg_index"]), "param": c["param"], "stat": c["stat"],
+        "seg_global": c.get("seg_global"), "obs": round(float(c["obs"]), 4),
+        "z": None if np.isnan(z) else round(float(z), 3),
+        "p_raw": None if np.isnan(p) else round(float(p), 4),
+        "significant_holm": bool(c["significant_holm"]),
+    }
+
+
+def segment_view(
+    name: str,
+    *,
+    method: str | None = None,
+    features: list[str] | None = None,
+    golden=None,
+    query=None,
+    stats: list[str] | None = None,
+    max_points: int = 400,
+    **build_kwargs,
+) -> dict:
+    """特徵建構層 UI endpoint（**獨立於主路徑**）：穩態段定義 + [參數×統計] 偏離視圖。
+
+    **可解釋/品質溝通視圖，非偵測器告警**（紅隊 v2，is_advisory=True）：隱性飄移主訊號仍是
+    ``score_timeline`` 的 L2 SPE。本函式為**唯一**觸碰 ``preprocess.features`` 的 demo 出口；主路徑函式
+    （``score_timeline``/``window_detail``）不得呼叫本函式或 features（結構不變式，test 鎖）。
+
+    跨 grade 閘（§4）：golden＝資料集 golden_mask（或使用者選段）、query＝drift 段（無則後半，warn）——
+    皆同 golden grade 內比較，不跨 grade pool。
+
+    Args:
+        name: 資料集。method: 段定義 ``trim``/``ssd``（None→config.seg_method）。features: 參數子集（None→全）。
+        golden: golden 規格（'auto'/(s,e)/{segments|range}/mask；None→真值 golden_mask）。
+        query: 比較區 (s,e)（None→drift 段；無 drift→後半）。stats: 統計量子集（None→config.seg_statistics）。
+
+    Returns:
+        可序列化 dict：method/params/stats、golden runs、query 段（全域）、feature_table、
+        drift.cells（依 |z| 排序、Holm 顯著旗標、chance_band、is_advisory）、逐參數 traces、誠實揭露 note。
+    """
+    from ..adapters.dataframe import _resolve_golden
+    from ..preprocess.features import detect_steady_segments, segment_drift_view, segment_statistics
+
+    ds, gt = registry.build(name, **build_kwargs)
+    fr = ds.frame
+    n = len(fr)
+    cols = list(gt.x_columns)
+    if features:
+        cols = [c for c in cols if c in features]
+        if not cols:
+            raise ValueError(f"未選到有效參數；可用: {list(gt.x_columns)}")
+    X = fr[cols].to_numpy(dtype=float)
+    meth = method or DEFAULT.seg_method
+    stat_list = list(stats) if stats else list(DEFAULT.seg_statistics)
+
+    # golden 區（pooled steady 樣本）——block-bootstrap null 抽窗來源
+    garg = golden_arg_from_spec(name, golden, **build_kwargs) if golden is not None else gt.golden_mask
+    gmask = np.asarray(_resolve_golden(garg, n, x_arr=fr[cols].to_numpy(dtype=float), config=DEFAULT))
+    golden_X = X[gmask]
+
+    # query 區（連續 (qs,qe)）：指定 > drift 段 > 後半（fallback warn）
+    if query is not None:
+        qs, qe = int(query[0]), int(query[1])
+    elif gt.drift_mask is not None and np.asarray(gt.drift_mask).any():
+        di = np.flatnonzero(np.asarray(gt.drift_mask))
+        qs, qe = int(di.min()), int(di.max() + 1)
+    else:
+        qs, qe = n // 2, n
+        warnings.warn(
+            "segment_view：無 drift 標記且未指定 query → 取後半段為比較區（僅示意）。", RuntimeWarning, stacklevel=2
+        )
+    query_X = X[qs:qe]
+
+    qsegs = detect_steady_segments(query_X, method=meth)
+    gsegs = detect_steady_segments(golden_X, method=meth)  # 顯示 golden 如何被切（drift view 用 raw 窗、非此段）
+    feat_df = segment_statistics(query_X, qsegs, cols, stats=stat_list)
+    view = segment_drift_view(golden_X, query_X, qsegs, cols, stats=stat_list)
+
+    qseg_global = [[qs + s, qs + e] for s, e in qsegs]
+    feat_records = []
+    for rec in feat_df.to_dict("records"):
+        rec = dict(rec)
+        rec["seg_index"], rec["seg_len"] = int(rec["seg_index"]), int(rec["seg_len"])
+        rec["seg_start"], rec["seg_end"] = int(rec["seg_start"]) + qs, int(rec["seg_end"]) + qs
+        feat_records.append(rec)
+    cells = []
+    for c in view["cells"]:
+        cc = dict(c)
+        cc["seg_global"] = qseg_global[c["seg_index"]] if c["seg_index"] < len(qseg_global) else None
+        cells.append(cc)
+    cells.sort(key=lambda c: (bool(np.isnan(c["z"])), -abs(c["z"]) if not np.isnan(c["z"]) else 0.0))
+    n_sig = int(sum(bool(c["significant_holm"]) for c in cells))
+
+    return {
+        "dataset": name, "method": meth, "params": cols, "stats": stat_list,
+        "golden": {"runs": _mask_runs(gmask), "n": int(gmask.sum())},
+        "query": {"start": qs, "end": qe, "segments": qseg_global, "n_segments": len(qsegs)},
+        "golden_segments_local": [[int(s), int(e)] for s, e in gsegs],
+        "feature_table": feat_records,
+        "drift": {
+            "cells": [_round_cell(c) for c in cells],
+            "n_comparisons": int(view["n_comparisons"]),
+            "chance_band_z": round(float(view["chance_band_z"]), 3),
+            "is_advisory": True,
+            "n_significant": n_sig,
+        },
+        "traces": _downsample_traces(X, qs, qe, cols, max_points),
+        "note": (
+            "此為**可解釋視圖、非告警**：逐參數段統計對保邊際型隱性飄移天生鈍，主訊號仍看健康指標(L2 SPE)。"
+            f"已對 {int(view['n_comparisons'])} 個[參數×統計]做 Holm 校正（雜訊帶 z≈{round(float(view['chance_band_z']), 2)}）。"
+        ),
+    }
+
+
 def build_and_save_model(
     name: str,
     *,
