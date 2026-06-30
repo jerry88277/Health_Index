@@ -748,14 +748,17 @@ def _run(screen, bundle, name, window):
     alarmed = [p for p in pts if p["persisted_alarm"]]
     if alarmed:
         worst = min(alarmed, key=lambda p: p["health_index"])
+        n_bad = 0
         try:
             dd = demo.window_detail(bundle["bundle_path"], name, worst["start"], worst["end"], compute_fwer=False,
                                     tag_map=demo.tag_map_for(_MODELS_DIR, name))  # 事件肇因也顯 DCS 位號（紅隊現場工程師）
             worst_top = dd["rbc_ranking"][0][0] if dd.get("rbc_ranking") else "(見窗下鑽)"
+            n_bad = sum(1 for k in ("L1", "L2", "L4") if dd.get("layers", {}).get(k, {}).get("unhealthy"))  # A19 層一致數
         except Exception:
             worst_top = "(見窗下鑽)"
         IncidentStore(_INCIDENTS).open_incident(product=pid, window=[worst["start"], worst["end"]],
-            health=worst["health_index"], confidence=worst["confidence"], top_cause=worst_top, detected_at=worst.get("ts"))
+            health=worst["health_index"], confidence=worst["confidence"], top_cause=worst_top,
+            detected_at=worst.get("ts"), n_layers_consistent=n_bad)
     # 增量8：Y 側品質飄移持續告警 → 開「品質」事件（kind=quality，與製程事件分流不互壓；防重複）
     q_alarmed = [p for p in pts if p.get("y_quality_persisted")]
     if q_alarmed:
@@ -976,13 +979,15 @@ def _events_body(screen, _r, _t, roi_loss, flt):
             mttr_line = f"MTTR {it['mttr_sec'] / 3600:.2f} 小時｜處置：{it.get('close_note')}" if it.get("mttr_sec") else ""
             kind = it.get("kind", "process")  # 增量8：品質 vs 製程 事件分流標籤
             ktxt, kcol = ("品質飄移", "#7c3aed") if kind == "quality" else ("製程異常", _ACCENT)
+            nlc = it.get("n_layers_consistent", 0)  # A19：層一致數（多層一致＝可信告警，依此自動定級）
+            layer_txt = f"｜{nlc} 層一致（依此自動定級）" if (kind == "process" and nlc) else ""
             cards.append(_card([
                 html.Div([html.Span(it["id"] + "　", style={"fontWeight": 500}),
                           html.Span(ktxt, style={"background": kcol, "color": "#fff", "borderRadius": "6px",
                                     "padding": "1px 8px", "fontSize": "12px", "marginRight": "8px"}),
                           html.Span(it["severity"], style={"color": sev, "fontWeight": 500}),
                           html.Span("　" + it["status"], style={"color": "#51607a"})]),
-                html.Div(f"{it['product']}｜肇因 {it['top_cause']}｜健康 {it['health']}｜可信 {it['confidence']}｜{it['detected_at']}",
+                html.Div(f"{it['product']}｜肇因 {it['top_cause']}｜健康 {it['health']}｜可信 {it['confidence']}{layer_txt}｜{it['detected_at']}",
                          style={"fontSize": "13px", "color": "#51607a", "margin": "4px 0"}),
                 html.Div(mttr_line, style={"fontSize": "12px", "color": "#888"}),
                 html.Div(acts, style={"marginTop": "6px"}),

@@ -112,6 +112,20 @@ def test_severity_rule():
     assert severity_of(0.55, 0.9) == "warning"
     assert severity_of(0.40, 0.5) == "warning"   # 低可信 → 不升 critical
     assert severity_of(0.95, 0.95) == "info"
+    # A19：層一致數納入 severity（多層一致＝可信告警）。預設 n=0 → borderline 維持 warning（向後相容，上方已驗）。
+    assert severity_of(0.55, 0.9, 2) == "critical"   # borderline + ≥2 層一致 → 升 critical（可信告警）
+    assert severity_of(0.55, 0.9, 1) == "warning"    # borderline + 單層 → 仍 warning（存疑/邊緣）
+    assert severity_of(0.40, 0.9, 2) == "critical"   # health 很低 → critical（與層數無關）
+    assert severity_of(0.55, 0.5, 3) == "warning"    # 低可信（外推）優先 → 即使 3 層一致也不升 critical
+
+
+def test_open_incident_stores_layer_consistency_and_escalates(tmp_path):
+    """A19：open_incident 接 n_layers_consistent → 存欄 + borderline 多層一致自動升 critical（不傳 severity 時）。"""
+    p = tmp_path / "inc.json"
+    inc = IncidentStore(str(p)).open_incident(product="A", window=[0, 60], health=0.55, confidence=0.9,
+                                              top_cause="T1", detected_at=_T0, opened_at=_T0, n_layers_consistent=2)
+    assert inc.n_layers_consistent == 2 and inc.severity == "critical"
+    assert IncidentStore(str(p)).list()[0]["n_layers_consistent"] == 2  # 重載持久（含新欄）
 
 
 def test_persist_reload(tmp_path):

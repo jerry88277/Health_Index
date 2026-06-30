@@ -681,14 +681,16 @@ def ingest_incidents(bundle_path: str, name: str, store_path: str, *, window: in
     if not alarmed:
         return {"opened": False, "incident_id": None}
     worst = min(alarmed, key=lambda p: p["health_index"])
+    n_bad = 0
     try:
         d = window_detail(bundle_path, name, worst["start"], worst["end"], compute_fwer=False, **build_kwargs)
         top = d["rbc_ranking"][0][0] if d.get("rbc_ranking") else "(見窗下鑽)"
+        n_bad = sum(1 for k in ("L1", "L2", "L4") if d.get("layers", {}).get(k, {}).get("unhealthy"))  # A19 層一致數
     except Exception:
         top = "(見窗下鑽)"
     inc = store.open_incident(product=tl["product"], window=[worst["start"], worst["end"]],
                               health=worst["health_index"], confidence=worst["confidence"],
-                              top_cause=top, detected_at=worst.get("ts"))
+                              top_cause=top, detected_at=worst.get("ts"), n_layers_consistent=n_bad)
     return {"opened": True, "incident_id": inc.id}
 
 

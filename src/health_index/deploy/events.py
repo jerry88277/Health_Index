@@ -39,16 +39,25 @@ class Incident:
     close_note: str | None = None
     close_reason: str | None = None  # real（真實處置）/ false_alarm（誤報）/ ignore（已知狀況忽略）
     mttr_sec: float | None = None  # 關閉時 = closed_at − opened_at（真實處置歷時，秒）
+    n_layers_consistent: int = 0  # 紅隊 A19：L1/L2/L4 同時異常層數（多層一致＝可信告警，納 severity 與事件卡顯示）
 
 
-def severity_of(health: float, confidence: float) -> str:
-    """由健康度 + 可信度定嚴重度（確定性規則）：低健康+高可信＝critical；低可信＝warning（存疑）。"""
+def severity_of(health: float, confidence: float, n_layers_consistent: int = 0) -> str:
+    """由健康度 + 可信度 + **層一致數**定嚴重度（確定性規則；紅隊 A19）。
+
+    層一致數＝L1/L2/L4 同時異常的層數——多個獨立偵測器一致＝corroborated（可信、該優先處理），單層＝
+    可能雜訊。規則：低可信(外推)→warning（存疑不升級）；health 很低(<0.45)→critical；**borderline
+    (0.45≤health<0.6)：≥2 層一致才升 critical（可信告警），單層則 warning（存疑/邊緣）**——與 window_detail
+    verdict 同邏輯，修正原「不看層一致→停車優先序失真」。
+
+    向後相容：``n_layers_consistent`` 預設 0（呼叫端未提供）→ borderline 維持 warning，既有行為不變。
+    """
     if confidence < 0.6:
         return "warning"        # 存疑（外推）→ 不升到 critical，避免假警拉高層級
     if health < 0.45:
         return "critical"
     if health < 0.6:
-        return "warning"
+        return "critical" if n_layers_consistent >= 2 else "warning"  # A19：多層一致＝可信告警才升 critical
     return "info"
 
 
@@ -91,7 +100,7 @@ class IncidentStore:
     def open_incident(
         self, *, product: str, window, health: float, confidence: float, top_cause: str,
         detected_at: str | None = None, opened_at: str | None = None, severity: str | None = None,
-        kind: str = "process",
+        kind: str = "process", n_layers_consistent: int = 0,
     ) -> Incident:
         """開案；同 (product, kind) 已有 active(open/ack) 事件則回該事件（防重複，不開新案）。
 
@@ -107,7 +116,8 @@ class IncidentStore:
             id=self._next_id(items), product=str(product), detected_at=_iso(detected_at),
             window=[int(window[0]), int(window[1])], health=round(float(health), 4),
             confidence=round(float(confidence), 4), top_cause=str(top_cause),
-            severity=severity or severity_of(health, confidence), kind=str(kind), opened_at=_iso(opened_at),
+            severity=severity or severity_of(health, confidence, n_layers_consistent), kind=str(kind),
+            opened_at=_iso(opened_at), n_layers_consistent=int(n_layers_consistent),
         )
         items.append(asdict(inc))
         self._save(items)
