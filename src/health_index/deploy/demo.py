@@ -427,8 +427,13 @@ def window_detail(
         yw = ds.frame.iloc[int(start) : int(end)][Y_VALUE].to_numpy(dtype=float)
         obs = np.isfinite(yw)
         n_obs = int(obs.sum())
+        # 誠實揭露品質維度涵蓋（紅隊 blocker：勿隱含「全品質涵蓋」）：純量 Y 只有 map(X→Y 關係)分量，
+        # 無 dist(多維品質分布)分量——y_mspc_ 為 None 即代表此資料集為純量品質。
+        dist_avail = yh.y_mspc_ is not None
+        coverage = ("含 X→Y 關係(map) + 多維品質分布(dist)" if dist_avail
+                    else "純量品質：僅監控 X→Y 關係(map)；無多維品質分布(dist)維度")
         ss_block: dict = {"available": True, "n_y_obs": n_obs, "cp_available": bool(yh.ss_.cp_available),
-                          "y_flagged": False}
+                          "y_flagged": False, "dist_available": dist_avail, "coverage": coverage}
         if n_obs > 0:
             Xo = X[obs]
             yhat = yh.ss_.predict(Xo)

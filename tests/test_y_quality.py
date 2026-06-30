@@ -55,6 +55,15 @@ def test_sparse_y_honest_none_not_fake_green(tmp_path):
     assert insufficient and all(p["y_flagged"] is False for p in insufficient)  # 不可判時不旗標
 
 
+def test_scalar_y_discloses_no_dist_dimension(tmp_path):
+    """誠實揭露（紅隊 blocker）：純量品質資料集 → 品質維度只有 map(X→Y)、無 dist(多維分布)，不隱含全涵蓋。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    d = demo.window_detail(m["bundle_path"], "synthetic", 0, 60, compute_fwer=False, seed=5, drift_strength=1.2)
+    ss = d["soft_sensor"]
+    assert ss["available"] is True and ss["dist_available"] is False
+    assert "純量" in ss["coverage"] and "map" in ss["coverage"]
+
+
 def test_no_y_no_quality_dimension(tmp_path):
     """無 Y 軟量測 → has_y_mapping False、n_quality_alarms 0、點無 yhat（不杜撰品質維度）。"""
     name = "_qtest_noy"

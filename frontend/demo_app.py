@@ -859,6 +859,8 @@ def _detail(click, role, bundle, name, window):
         html.Div([html.Span(f"RBC 肇因排行 (top5)：{rbc_top}"),
                   html.Span(rbc_note, style={"color": "#888", "fontSize": "12px"})], style={"marginTop": "8px"}),
         html.Div(ss_line, style={"marginTop": "6px", "color": _CONF}),
+        html.Div(f"品質維度涵蓋：{ss.get('coverage')}" if ss.get("available") else "",
+                 style={"color": "#888", "fontSize": "12px", "marginTop": "2px"}),  # 誠實揭露 map-only/含 dist
         html.Div(f"模型版本：{d['model_version']}", style={"color": "#888", "fontSize": "12px", "marginTop": "4px"}),
     ])
 
