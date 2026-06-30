@@ -67,6 +67,28 @@ def detect_change_points(
     return [int(b) for b in bkps if b < len(X)]
 
 
+def seg_ramp(Xs: np.ndarray, s: int, e: int) -> float:
+    """段 [s,e) 在**標準化空間**每特徵跨段線性漂移均值（暫態/漸變偵測）。
+
+    共用穩態準則（單一真相）：``_auto_select_golden``（golden 自動挑選）與特徵建構層的 SSD 段判定
+    皆復用此函式——避免各自造未校準門檻（紅隊 B5）。值越大＝段內越非平穩（含 ramp/transient）。
+
+    Args: Xs: 已標準化的 (n,p)；s,e: 段邊界 [s,e)。Returns: 漂移量級（≥0），與 ``golden_auto_ramp_max`` 同尺度。
+    """
+    t = np.arange(e - s, dtype=float)
+    tc = t - t.mean()
+    slopes = (Xs[s:e] * tc[:, None]).sum(axis=0) / ((tc * tc).sum() + 1e-9)
+    return float(np.mean(np.abs(slopes) * (e - s)))
+
+
+def seg_std(Xs: np.ndarray, s: int, e: int) -> float:
+    """段 [s,e) 在**標準化空間**內 std 均值（凍結/死感測器偵測；近 0＝退化段，不可當基準）。
+
+    與 ``seg_ramp`` 同為共用穩態準則（紅隊 B5：SSD 不另造門檻，復用 golden 挑選已校準者）。
+    """
+    return float(np.mean(Xs[s:e].std(axis=0)))
+
+
 def segment(
     dataset: ProcessDataset,
     *,

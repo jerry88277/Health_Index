@@ -17,7 +17,7 @@ import pandas as pd
 
 from ..config import DEFAULT, Config
 from ..interface import GRADE_LABEL, TIMESTAMP, Y_TIMESTAMP, Y_VALUE, ContractError, ProcessDataset
-from ..preprocess.segment import detect_change_points
+from ..preprocess.segment import detect_change_points, seg_ramp, seg_std
 from .base import GroundTruth, Segment
 
 
@@ -79,16 +79,11 @@ def _auto_select_golden(
         m[:min_len] = True
         return m
 
-    def _ramp(s: int, e: int) -> float:  # 標準化空間每特徵跨段線性漂移均值（暫態/漸變偵測）
-        t = np.arange(e - s, dtype=float)
-        tc = t - t.mean()
-        slopes = (Xs[s:e] * tc[:, None]).sum(axis=0) / ((tc * tc).sum() + 1e-9)
-        return float(np.mean(np.abs(slopes) * (e - s)))
-
-    def _seg_std(s: int, e: int) -> float:  # 標準化空間段內 std（凍結/死感測器偵測）
-        return float(np.mean(Xs[s:e].std(axis=0)))
-
-    clean = [(s, e) for s, e in segs if _ramp(s, e) < config.golden_auto_ramp_max and _seg_std(s, e) > 1e-3]
+    # 穩態準則抽至 preprocess.segment（seg_ramp/seg_std），與特徵建構層 SSD 共用單一真相（紅隊 B5）
+    clean = [
+        (s, e) for s, e in segs
+        if seg_ramp(Xs, s, e) < config.golden_auto_ramp_max and seg_std(Xs, s, e) > 1e-3
+    ]
     if not bkps:  # PELT 未切出任何變點 → 無法區分 regime（紅隊 B：原靜默全段 bug）
         warnings.warn(
             "golden='auto'：未偵測到變點，全序列視為單一 regime 為 golden；若實含多 regime/drift "
@@ -104,8 +99,8 @@ def _auto_select_golden(
             RuntimeWarning,
             stacklevel=stacklevel,
         )
-        nondegen = [se for se in segs if _seg_std(*se) > 1e-3] or segs
-        s, e = min(nondegen, key=lambda se: _ramp(*se))
+        nondegen = [se for se in segs if seg_std(Xs, *se) > 1e-3] or segs
+        s, e = min(nondegen, key=lambda se: seg_ramp(Xs, *se))
     m = np.zeros(n, dtype=bool)
     m[s:e] = True
     return m
