@@ -24,7 +24,7 @@ class Incident:
 
     id: str
     product: str
-    detected_at: str          # ISO 時間（偵測）
+    detected_at: str          # 資料時間：最嚴重窗的資料時間戳（可能 naive，如真實 PIMS/歷史資料）
     window: list              # [start, end] 樣本索引
     health: float
     confidence: float
@@ -32,12 +32,13 @@ class Incident:
     severity: str             # info / warning / critical
     kind: str = "process"     # 增量8：process（X 側製程異常）/ quality（Y 側品質飄移）——分流防重複、分開閉環
     status: str = OPEN
+    opened_at: str | None = None  # 真實牆鐘：本案在系統開立的時刻（與 detected_at 的資料時間分離，MTTR 用此）
     ack_by: str | None = None
     ack_at: str | None = None
     closed_at: str | None = None
     close_note: str | None = None
     close_reason: str | None = None  # real（真實處置）/ false_alarm（誤報）/ ignore（已知狀況忽略）
-    mttr_sec: float | None = None  # 關閉時 = closed_at − detected_at（秒）
+    mttr_sec: float | None = None  # 關閉時 = closed_at − opened_at（真實處置歷時，秒）
 
 
 def severity_of(health: float, confidence: float) -> str:
@@ -53,6 +54,16 @@ def severity_of(health: float, confidence: float) -> str:
 
 def _iso(now: str | None) -> str:
     return now if now is not None else datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _parse_aware(s: str) -> datetime:
+    """解析 ISO 時間；**naive 視為本機時區**轉為 aware → 避免 aware−naive 相減 TypeError（紅隊 blocker）。
+
+    真實資料集（CCPP/TEP/Steel、未來 PIMS）的資料時間戳常為 naive，而 closed_at 走 ``_iso`` 為 aware；
+    兩者直接相減會炸並被前端 except 靜默吞掉，使事件永遠關不掉。此處統一轉 aware 再相減。
+    """
+    dt = datetime.fromisoformat(s)
+    return dt if dt.tzinfo is not None else dt.astimezone()
 
 
 class IncidentStore:
@@ -79,10 +90,12 @@ class IncidentStore:
 
     def open_incident(
         self, *, product: str, window, health: float, confidence: float, top_cause: str,
-        detected_at: str | None = None, severity: str | None = None, kind: str = "process",
+        detected_at: str | None = None, opened_at: str | None = None, severity: str | None = None,
+        kind: str = "process",
     ) -> Incident:
         """開案；同 (product, kind) 已有 active(open/ack) 事件則回該事件（防重複，不開新案）。
 
+        detected_at＝資料時間（最嚴重窗時間戳）；opened_at＝真實開立牆鐘（None→當下），MTTR 用後者算處置歷時。
         kind 分流（增量8）：製程異常(process)與品質飄移(quality)各自一條 episode，不互相壓制——同一製程
         可同時有一個製程事件與一個品質事件。
         """
@@ -94,7 +107,7 @@ class IncidentStore:
             id=self._next_id(items), product=str(product), detected_at=_iso(detected_at),
             window=[int(window[0]), int(window[1])], health=round(float(health), 4),
             confidence=round(float(confidence), 4), top_cause=str(top_cause),
-            severity=severity or severity_of(health, confidence), kind=str(kind),
+            severity=severity or severity_of(health, confidence), kind=str(kind), opened_at=_iso(opened_at),
         )
         items.append(asdict(inc))
         self._save(items)
@@ -114,13 +127,18 @@ class IncidentStore:
         return self._update(incident_id, status=ACK, ack_by=str(by), ack_at=_iso(at))
 
     def close(self, incident_id: str, *, note: str, by: str, at: str | None = None, reason: str = "real") -> Incident:
-        """關閉並留處置記錄；計算 MTTR（closed − detected）。reason∈{real,false_alarm,ignore}（誤報不計入 MTTR/ROI）。"""
+        """關閉並留處置記錄；MTTR＝closed_at − opened_at（真實處置歷時）。reason∈{real,false_alarm,ignore}（誤報不計 MTTR/ROI）。
+
+        以 ``_parse_aware`` 統一 naive/aware 再相減（修紅隊 blocker：真實資料 naive ts vs aware now 相減 TypeError）；
+        opened_at 缺（舊檔）則退回 detected_at。
+        """
         items = self._load()
         rec = next((it for it in items if it["id"] == incident_id), None)
         if rec is None:
             raise KeyError(f"找不到事件 {incident_id}")
         closed_at = _iso(at)
-        mttr = (datetime.fromisoformat(closed_at) - datetime.fromisoformat(rec["detected_at"])).total_seconds()
+        base = rec.get("opened_at") or rec["detected_at"]  # 真實開立時刻；舊檔退回資料時間
+        mttr = (_parse_aware(closed_at) - _parse_aware(base)).total_seconds()
         return self._update(incident_id, status=CLOSED, closed_at=closed_at, close_note=str(note),
                             close_reason=str(reason), ack_by=rec.get("ack_by") or str(by), mttr_sec=round(float(mttr), 1))
 

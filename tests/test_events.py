@@ -16,7 +16,7 @@ def _store(tmp_path):
 
 def test_open_and_list(tmp_path):
     s = _store(tmp_path)
-    inc = s.open_incident(product="A", window=[600, 660], health=0.40, confidence=0.91, top_cause="T1", detected_at=_T0)
+    inc = s.open_incident(product="A", window=[600, 660], health=0.40, confidence=0.91, top_cause="T1", detected_at=_T0, opened_at=_T0)
     assert inc.id == "INC-0001" and inc.status == "open" and inc.severity == "critical"  # 低健康+高可信
     assert len(s.list()) == 1 and s.list(product="A")[0]["top_cause"] == "T1"
 
@@ -24,8 +24,8 @@ def test_open_and_list(tmp_path):
 def test_dedup_one_active_per_product(tmp_path):
     """防重：同 product 已有 active 事件 → 再 open 回同一事件、不開新案；不同 product 才開新案。"""
     s = _store(tmp_path)
-    a1 = s.open_incident(product="A", window=[600, 660], health=0.47, confidence=0.9, top_cause="T1", detected_at=_T0)
-    a2 = s.open_incident(product="A", window=[660, 720], health=0.46, confidence=0.9, top_cause="T1", detected_at=_T0)
+    a1 = s.open_incident(product="A", window=[600, 660], health=0.47, confidence=0.9, top_cause="T1", detected_at=_T0, opened_at=_T0)
+    a2 = s.open_incident(product="A", window=[660, 720], health=0.46, confidence=0.9, top_cause="T1", detected_at=_T0, opened_at=_T0)
     b1 = s.open_incident(product="B", window=[0, 60], health=0.4, confidence=0.9, top_cause="F1", detected_at=_T0)
     assert a2.id == a1.id          # 同裝置未結 → 不重複開案
     assert b1.id == "INC-0002"     # 不同裝置 → 新案
@@ -35,7 +35,7 @@ def test_dedup_one_active_per_product(tmp_path):
 def test_ack_close_mttr(tmp_path):
     """閉環：open→ack→close；MTTR = closed − detected（1800s）；處置留痕、ack_by 保留。"""
     s = _store(tmp_path)
-    inc = s.open_incident(product="A", window=[600, 660], health=0.47, confidence=0.9, top_cause="T1", detected_at=_T0)
+    inc = s.open_incident(product="A", window=[600, 660], health=0.47, confidence=0.9, top_cause="T1", detected_at=_T0, opened_at=_T0)
     s.ack(inc.id, by="王工", at=_T0)
     closed = s.close(inc.id, note="調 FV-101 開度後恢復", by="王工", at=_T1)
     assert closed.status == "closed" and closed.mttr_sec == 1800.0
@@ -45,7 +45,7 @@ def test_ack_close_mttr(tmp_path):
 def test_reopen_after_close(tmp_path):
     """關閉後同裝置再告警 → 開**新**案（episode 結束才開新的）。"""
     s = _store(tmp_path)
-    a1 = s.open_incident(product="A", window=[600, 660], health=0.47, confidence=0.9, top_cause="T1", detected_at=_T0)
+    a1 = s.open_incident(product="A", window=[600, 660], health=0.47, confidence=0.9, top_cause="T1", detected_at=_T0, opened_at=_T0)
     s.close(a1.id, note="ok", by="王工", at=_T1)
     a2 = s.open_incident(product="A", window=[700, 760], health=0.45, confidence=0.9, top_cause="T1", detected_at=_T1)
     assert a2.id != a1.id and len(s.list()) == 2
@@ -54,7 +54,7 @@ def test_reopen_after_close(tmp_path):
 def test_stats_mttr(tmp_path):
     """處長 KPI：計數 + 平均 MTTR（僅 closed）。"""
     s = _store(tmp_path)
-    a = s.open_incident(product="A", window=[600, 660], health=0.47, confidence=0.9, top_cause="T1", detected_at=_T0)
+    a = s.open_incident(product="A", window=[600, 660], health=0.47, confidence=0.9, top_cause="T1", detected_at=_T0, opened_at=_T0)
     s.close(a.id, note="x", by="工", at=_T1)               # mttr 1800
     s.open_incident(product="B", window=[0, 60], health=0.4, confidence=0.9, top_cause="F1", detected_at=_T0)  # open
     st = s.stats()
@@ -67,9 +67,9 @@ def test_false_alarm_excluded_from_mttr_and_roi(tmp_path):
     from health_index.deploy.roi import estimate_roi
 
     s = _store(tmp_path)
-    a = s.open_incident(product="A", window=[0, 60], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0)
+    a = s.open_incident(product="A", window=[0, 60], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0, opened_at=_T0)
     s.close(a.id, note="其實沒事", by="工", at=_T0, reason="false_alarm")  # 0s，誤報
-    b = s.open_incident(product="B", window=[0, 60], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0)
+    b = s.open_incident(product="B", window=[0, 60], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0, opened_at=_T0)
     s.close(b.id, note="真修", by="工", at=_T1, reason="real")              # 1800s，真實
     st = s.stats()
     assert st["false_alarm"] == 1 and st["closed"] == 2
@@ -78,14 +78,30 @@ def test_false_alarm_excluded_from_mttr_and_roi(tmp_path):
     assert r["n_critical_events"] == 1  # A(誤報)排除，只剩 B
 
 
+def test_close_tz_robust_naive_data_timestamp(tmp_path):
+    """紅隊 blocker（已重現）：真實資料集 naive 資料時間戳 vs aware closed_at 相減不再 TypeError。
+
+    WHY：CCPP/TEP/Steel（及未來 PIMS）的 ts 為 naive；舊 close() 直接 fromisoformat 相減 aware now → TypeError
+    被前端 except 靜默吞掉 → 所有真實事件關不掉、MTTR 永不計算、配合 (product,kind) 去重使該製程再也開不了新案。
+    """
+    s = _store(tmp_path)
+    inc = s.open_incident(product="ccpp", window=[0, 60], health=0.4, confidence=0.9, top_cause="AT",
+                          detected_at="2017-01-01 12:00:00", opened_at="2017-01-01 12:00:00")  # naive（無時區）
+    closed = s.close(inc.id, note="調整後恢復", by="王工")  # closed_at=_iso(None)=aware now → 不可崩
+    assert closed.status == "closed" and closed.mttr_sec is not None  # 成功關閉、MTTR 算得出
+    # 關閉後同製程可再開新案（先前因關不掉被 (product,kind) 去重永久壓住）
+    again = s.open_incident(product="ccpp", window=[100, 160], health=0.4, confidence=0.9, top_cause="AT")
+    assert again.id != inc.id
+
+
 def test_kind_separates_process_and_quality_episodes(tmp_path):
     """增量8：品質(quality)與製程(process)事件各自一條 episode（同 product 不互壓）；同 kind 才防重複。"""
     s = _store(tmp_path)
-    p1 = s.open_incident(product="A", window=[0, 60], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0)
+    p1 = s.open_incident(product="A", window=[0, 60], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0, opened_at=_T0)
     q1 = s.open_incident(product="A", window=[0, 60], health=0.5, confidence=0.9, top_cause="品質飄移",
                          detected_at=_T0, kind="quality")
     assert p1.id != q1.id and p1.kind == "process" and q1.kind == "quality"  # 不互壓，兩條並存
-    p2 = s.open_incident(product="A", window=[60, 120], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0)
+    p2 = s.open_incident(product="A", window=[60, 120], health=0.4, confidence=0.9, top_cause="T", detected_at=_T0, opened_at=_T0)
     assert p2.id == p1.id           # 同 (product, kind) 仍防重複
     assert s.stats()["active"] == 2  # 製程 + 品質 各一
 
@@ -101,5 +117,5 @@ def test_severity_rule():
 def test_persist_reload(tmp_path):
     """重啟安全：另一 store 實例讀同檔 → 事件持久。"""
     p = tmp_path / "incidents.json"
-    IncidentStore(str(p)).open_incident(product="A", window=[0, 60], health=0.4, confidence=0.9, top_cause="T1", detected_at=_T0)
+    IncidentStore(str(p)).open_incident(product="A", window=[0, 60], health=0.4, confidence=0.9, top_cause="T1", detected_at=_T0, opened_at=_T0)
     assert len(IncidentStore(str(p)).list()) == 1

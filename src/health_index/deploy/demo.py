@@ -579,8 +579,8 @@ def incidents_to_csv(incidents: list[dict]) -> str:
     import csv
     import io
 
-    cols = ["id", "product", "kind", "detected_at", "severity", "status", "health", "confidence", "top_cause",
-            "ack_by", "ack_at", "closed_at", "mttr_sec", "close_note"]
+    cols = ["id", "product", "kind", "detected_at", "opened_at", "severity", "status", "health", "confidence",
+            "top_cause", "ack_by", "ack_at", "closed_at", "mttr_sec", "close_reason", "close_note"]
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
     w.writeheader()
