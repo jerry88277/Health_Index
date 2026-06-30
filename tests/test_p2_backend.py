@@ -57,8 +57,15 @@ def test_ingest_incidents_and_event_overview(tmp_path):
 
 
 def test_estimate_roi_is_assumption_driven():
-    """ROI＝情境假設估算：savings = n_critical × prevented_fraction × loss；assumptions 必透明（誠實標）。"""
-    inc = [{"severity": "critical"}, {"severity": "critical"}, {"severity": "warning"}]
+    """ROI＝情境假設估算：savings = n_critical × prevented_fraction × loss；assumptions 必透明（誠實標）。
+
+    分母為**已關閉真實處置**（close_reason=='real'，紅隊 A17）→ 兩筆 real critical 計入、warning 不計。
+    """
+    inc = [
+        {"severity": "critical", "close_reason": "real"},
+        {"severity": "critical", "close_reason": "real"},
+        {"severity": "warning", "close_reason": "real"},
+    ]
     r = estimate_roi(inc, avg_loss_per_unplanned_stop=1_000_000, prevented_fraction=0.5)
     assert r["n_critical_events"] == 2
     assert r["assumed_prevented_stops"] == 1.0 and r["est_savings"] == 1_000_000
