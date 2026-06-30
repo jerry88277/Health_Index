@@ -118,3 +118,35 @@ def test_acceptance_includes_y_dimension_for_dense_clean_y():
         assert r.y_holdout_fpr is not None and r.y_fpr_ok is True  # 乾淨→Y 側不誤報、納入 gate
     finally:
         registry._BUILDERS.pop(name, None)
+
+
+def test_user_selected_golden_discloses_selection_bias():
+    """WHY（紅隊 A10 p-hacking 防護，誠實標 Option-A）：使用者圈 golden 段 → FPR 在該段上評。
+    若反覆改選 golden 段直到 fpr_ok=True（跨次選擇偏誤/多重比較），此 FPR 是「選最佳」估計、非獨立
+    out-of-sample 保證。報告須**自陳**此偏誤，不可讓使用者把 PASS 當全域保證。
+
+    當使用者顯式傳 golden 規格 → golden_selected_by_user=True 且 selection_disclosure 揭露選擇偏誤；
+    且 verdict() 含揭露語（PASS 也要附）。無此揭露＝靜默把 p-hacking 後的 FPR 當誠實估計＝測試失敗。
+    """
+    r = acceptance_from_dataset("synthetic", seed=5, window=40, compute_fwer=False, golden=(0, 300))
+    assert r.golden_selected_by_user is True
+    assert r.selection_disclosure is not None and "選擇" in r.selection_disclosure
+    assert "選擇" in r.verdict()  # PASS/FAIL 都附揭露
+
+
+def test_groundtruth_golden_no_selection_disclosure():
+    """對偶：未傳 golden（用資料集固定真值段）→ 無使用者選段、不觸發選擇偏誤揭露（不過度告警）。"""
+    r = acceptance_from_dataset("synthetic", seed=5, drift_strength=1.2, window=40, compute_fwer=False)
+    assert r.golden_selected_by_user is False
+    assert r.selection_disclosure is None
+    assert "選擇" not in r.verdict()
+
+
+def test_selection_disclosure_default_off_for_direct_report():
+    """直接建 AcceptanceReport（不經 from_dataset）預設不揭露——欄位有預設、向後相容既有建構。"""
+    r = AcceptanceReport(
+        product="A", window=40, n_golden_holdout=100, holdout_golden_fpr=0.0, golden_floor=0.9,
+        drift_recall=None, spc_exceedance_excess=None, fpr_ok=True, recall_ok=None, spc_blind=None,
+    )
+    assert r.golden_selected_by_user is False and r.selection_disclosure is None
+    assert r.passed is True  # 揭露不影響 passed（只是誠實標，非 gate）

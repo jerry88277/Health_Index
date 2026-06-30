@@ -39,10 +39,14 @@ class AcceptanceReport:
     # 增量9 #3：Y 側（軟測量品質維度）hold-out golden 誤報率——None=無 Y/觀測不足，不適用（誠實標）
     y_holdout_fpr: float | None = None
     y_fpr_ok: bool | None = None
+    # 紅隊 A10：使用者圈 golden 段（非資料集固定真值）→ True。FPR 在使用者選的段上評，若反覆改段直到過
+    # gate＝跨次選擇偏誤（p-hacking）→ 須誠實揭露此 FPR 為「選最佳」估計、非獨立 out-of-sample 保證（Option-A）。
+    golden_selected_by_user: bool = False
+    selection_disclosure: str | None = None
 
     @property
     def passed(self) -> bool:
-        """所有**適用**判準皆通過。"""
+        """所有**適用**判準皆通過（selection_disclosure 只誠實標、不當 gate——A10 採揭露非硬擋）。"""
         checks = [self.fpr_ok]
         for c in (self.recall_ok, self.spc_blind, self.y_fpr_ok):
             if c is not None:
@@ -51,19 +55,24 @@ class AcceptanceReport:
 
     def verdict(self) -> str:
         """**逐判準**人類可讀結論（紅隊 B#3：passed=False 須區分 FPR 失敗 vs recall 失敗 vs SPC，
-        避免使用者把『校準不足』與『弱 drift 偵測力不足』誤讀為『模型整體爛』）。"""
+        避免使用者把『校準不足』與『弱 drift 偵測力不足』誤讀為『模型整體爛』）。
+
+        若 golden 為使用者所選（A10），附選擇偏誤揭露——PASS 也要附，避免把 p-hacking 後的 FPR 當全域保證。
+        """
         if self.passed:
-            return "PASS：可部署"
-        fails = []
-        if not self.fpr_ok:
-            fails.append(f"golden 誤報率 {self.holdout_golden_fpr} 過高（校準/golden 平穩性不足，非偵測力問題）")
-        if self.y_fpr_ok is False:
-            fails.append(f"Y 側品質誤報率 {self.y_holdout_fpr} 過高（軟測量在正常段也報品質飄移，X→Y 校準不足）")
-        if self.recall_ok is False:
-            fails.append(f"事故 recall {self.drift_recall} 偏低（偵測力不足；弱 drift 需更大窗/full-segment 或更強特徵）")
-        if self.spc_blind is False:
-            fails.append("事故其實單變數 SPC 抓得到（非隱性飄移情境）")
-        return "FAIL：" + "；".join(fails)
+            base = "PASS：可部署"
+        else:
+            fails = []
+            if not self.fpr_ok:
+                fails.append(f"golden 誤報率 {self.holdout_golden_fpr} 過高（校準/golden 平穩性不足，非偵測力問題）")
+            if self.y_fpr_ok is False:
+                fails.append(f"Y 側品質誤報率 {self.y_holdout_fpr} 過高（軟測量在正常段也報品質飄移，X→Y 校準不足）")
+            if self.recall_ok is False:
+                fails.append(f"事故 recall {self.drift_recall} 偏低（偵測力不足；弱 drift 需更大窗/full-segment 或更強特徵）")
+            if self.spc_blind is False:
+                fails.append("事故其實單變數 SPC 抓得到（非隱性飄移情境）")
+            base = "FAIL：" + "；".join(fails)
+        return base + (f"（{self.selection_disclosure}）" if self.selection_disclosure else "")
 
 
 def _frame_source(X: np.ndarray, x_columns) -> FrameSource:
@@ -83,6 +92,7 @@ def acceptance_report(
     compute_fwer: bool = True,
     persistence_k: int = 1,
     y_holdout: np.ndarray | None = None,
+    golden_selected_by_user: bool = False,
 ) -> AcceptanceReport:
     """對已建模型在 hold-out golden（+選配事故段）評估部署 gate。
 
@@ -95,6 +105,9 @@ def acceptance_report(
         spc_blind_max: 事故段相對 golden 的單變數越界增量上限（低於＝SPC 盲，隱性）。
         compute_fwer: 是否含 AC-6 FWER（is_alarm∨fwer_alarm，與線上 runner 同口徑）。
         persistence_k: 驗收用單窗即計（=1）以量原始窗 FPR，不被 persistence 遮蔽。
+        golden_selected_by_user: golden 段是否由使用者圈選（非資料集固定真值）。True→附選擇偏誤揭露
+            （A10）：FPR 在使用者選段上評，反覆改段直到過 gate＝跨次 p-hacking → 此 FPR 為「選最佳」估計、
+            非獨立 out-of-sample 保證。採 Option-A 誠實揭露（不硬擋）。
 
     Returns:
         AcceptanceReport。
@@ -143,6 +156,13 @@ def acceptance_report(
                 y_fpr = float(np.mean(flags))
                 y_fpr_ok = bool(y_fpr <= target_fpr)
 
+    # A10：使用者選段時附選擇偏誤揭露（Option-A 誠實標，不影響 passed）。
+    disclosure = (
+        "FPR 在使用者圈選的 golden 段上量測；若反覆改選 golden 段直到通過＝跨次選擇偏誤(p-hacking)，"
+        "此值為『選最佳』估計、非獨立 out-of-sample 保證——保證範圍僅限此段，上線實際 FPR 可能更高"
+        if golden_selected_by_user else None
+    )
+
     return AcceptanceReport(
         product=bundle.product,
         window=w,
@@ -156,6 +176,8 @@ def acceptance_report(
         spc_blind=spc_blind,
         y_holdout_fpr=None if y_fpr is None else round(y_fpr, 4),
         y_fpr_ok=y_fpr_ok,
+        golden_selected_by_user=bool(golden_selected_by_user),
+        selection_disclosure=disclosure,
     )
 
 
@@ -177,7 +199,8 @@ def acceptance_from_dataset(
     features：監控特徵子集（None→全用）——與建模子集對齊，使 FAIL gate 驗的是實際上線的子集模型。
     golden：使用者選的 golden 規格（(s,e)/bool mask/'auto'/比例；None→用資料集真值 golden_mask）。**驗收即驗
         實際要上線的模型**——使用者圈一段更平穩的 golden 時，FPR 在該段上評（解決固定 golden_mask 含非平穩
-        尾段→恆 FAIL 的脫鉤；季節性/時序資料如 steel/tep_tp 靠此選平穩段過關）。
+        尾段→恆 FAIL 的脫鉤；季節性/時序資料如 steel/tep_tp 靠此選平穩段過關）。**A10 誠實標**：傳 golden（使用者
+        選段）→ 報告附 selection_disclosure，揭露此 FPR 為使用者選段上的估計、反覆改段過 gate＝p-hacking 偏誤。
     """
     from ..adapters import registry
     from .bundle import build_bundle
@@ -216,5 +239,6 @@ def acceptance_from_dataset(
                 y_health = y_hold = None
     bundle = build_bundle(name, HealthIndex().fit(Xfit), cols, golden=Xfit, created_at=created_at, y_health=y_health)
     return acceptance_report(
-        bundle, Xhold, target_fpr=target_fpr, window=window, drift=Xdrift, compute_fwer=compute_fwer, y_holdout=y_hold
+        bundle, Xhold, target_fpr=target_fpr, window=window, drift=Xdrift, compute_fwer=compute_fwer, y_holdout=y_hold,
+        golden_selected_by_user=golden is not None,  # A10：使用者圈段→附選擇偏誤揭露
     )
