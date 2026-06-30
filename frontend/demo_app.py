@@ -604,12 +604,14 @@ def _build(_n, wp, wiz_name, name, gspec, grange, window, feats, feat_opts):
         return no_update, html.Span(f"❌ 建模失敗：{e}", style={"color": _BAD}), no_update
     acc = r.get("acceptance", {})
     recall_txt = (f"、事故 recall {acc['drift_recall']}" if acc.get("drift_recall") is not None else "")
-    if not r["saved"]:  # FPR 過高 → 物理擋存檔（誤報治理；recall 低改走警告不擋）
+    y_txt = (f"、Y 側品質誤報率 {acc['y_holdout_fpr']}" if acc.get("y_holdout_fpr") is not None else "")
+    if not r["saved"]:  # X 或 Y 側誤報率過高 → 物理擋存檔（誤報治理；recall 低改走警告不擋）
+        blk = "Y 側品質誤報率過高" if r.get("block_reason") == "y_fpr" else "誤報率過高"
         return no_update, html.Div([
-            html.Div("⛔ 誤報率過高，未存檔：" + acc.get("verdict", ""), style={"color": _BAD, "fontWeight": 500}),
-            html.Div(f"hold-out golden 誤報率 {acc.get('holdout_golden_fpr')}（過高）{recall_txt}",
+            html.Div(f"⛔ {blk}，未存檔：" + acc.get("verdict", ""), style={"color": _BAD, "fontWeight": 500}),
+            html.Div(f"hold-out golden 誤報率 {acc.get('holdout_golden_fpr')}{y_txt}{recall_txt}",
                      style={"fontSize": "13px", "color": "#51607a"}),
-            html.Div("請改選更平穩的黃金期、或檢查資料源後重建（會誤報的模型不予上線）。",
+            html.Div("請改選更平穩的黃金期、或檢查資料源/軟測量後重建（會誤報的模型不予上線）。",
                      style={"fontSize": "13px", "color": "#51607a"}),
         ]), no_update
     m, mod = r["build"], r["model"]
@@ -620,9 +622,9 @@ def _build(_n, wp, wiz_name, name, gspec, grange, window, feats, feat_opts):
         acc_line = html.Div([
             html.Div("✅ 驗收通過：" + acc["verdict"], style={"color": _OK, "fontWeight": 500}),
             html.Div(f"hold-out golden 誤報率 {acc['holdout_golden_fpr']}"
-                     f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{recall_txt}",
+                     f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{y_txt}{recall_txt}",
                      style={"fontSize": "13px", "color": "#51607a"}),
-            html.Div("（驗收採資料集標準時間連續 hold-out；正式上線應對實際 golden 範圍驗收）",
+            html.Div("（FPR 為前半 golden 模型的 out-of-sample 保守估計；部署用全 golden、資料更多通常更穩）",
                      style={"fontSize": "12px", "color": "#888"}),
         ])
     else:

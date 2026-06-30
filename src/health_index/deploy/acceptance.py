@@ -36,12 +36,15 @@ class AcceptanceReport:
     fpr_ok: bool
     recall_ok: bool | None
     spc_blind: bool | None
+    # 增量9 #3：Y 側（軟測量品質維度）hold-out golden 誤報率——None=無 Y/觀測不足，不適用（誠實標）
+    y_holdout_fpr: float | None = None
+    y_fpr_ok: bool | None = None
 
     @property
     def passed(self) -> bool:
         """所有**適用**判準皆通過。"""
         checks = [self.fpr_ok]
-        for c in (self.recall_ok, self.spc_blind):
+        for c in (self.recall_ok, self.spc_blind, self.y_fpr_ok):
             if c is not None:
                 checks.append(c)
         return all(checks)
@@ -54,6 +57,8 @@ class AcceptanceReport:
         fails = []
         if not self.fpr_ok:
             fails.append(f"golden 誤報率 {self.holdout_golden_fpr} 過高（校準/golden 平穩性不足，非偵測力問題）")
+        if self.y_fpr_ok is False:
+            fails.append(f"Y 側品質誤報率 {self.y_holdout_fpr} 過高（軟測量在正常段也報品質飄移，X→Y 校準不足）")
         if self.recall_ok is False:
             fails.append(f"事故 recall {self.drift_recall} 偏低（偵測力不足；弱 drift 需更大窗/full-segment 或更強特徵）")
         if self.spc_blind is False:
@@ -77,6 +82,7 @@ def acceptance_report(
     spc_blind_max: float = 0.15,
     compute_fwer: bool = True,
     persistence_k: int = 1,
+    y_holdout: np.ndarray | None = None,
 ) -> AcceptanceReport:
     """對已建模型在 hold-out golden（+選配事故段）評估部署 gate。
 
@@ -121,6 +127,22 @@ def acceptance_report(
             spc_excess = exc(D) - exc(G)
             spc_blind = bool(spc_excess < spc_blind_max)
 
+    # 增量9 #3：Y 側品質維度在 hold-out golden 的誤報率（軟測量在正常段也報品質飄移＝X→Y 校準不足）。
+    # 只在有 y_health 且窗內 Y 觀測足夠時可評；稀疏 Y/無 Y → None（不適用，誠實標，比照 recall）。
+    y_fpr = y_fpr_ok = None
+    yh = bundle.y_health
+    if yh is not None and y_holdout is not None:
+        yH = np.asarray(y_holdout, dtype=float)
+        if len(yH) == len(G):
+            flags = []
+            for i in range(0, len(G) - w + 1, w):
+                yw = yH[i : i + w]
+                if int(np.isfinite(yw).sum()) >= bundle.config.y_map_min_obs:
+                    flags.append(bool(yh.y_flagged(G[i : i + w], yw)))
+            if flags:
+                y_fpr = float(np.mean(flags))
+                y_fpr_ok = bool(y_fpr <= target_fpr)
+
     return AcceptanceReport(
         product=bundle.product,
         window=w,
@@ -132,6 +154,8 @@ def acceptance_report(
         fpr_ok=bool(np.isfinite(fpr) and fpr <= target_fpr),
         recall_ok=recall_ok,
         spc_blind=spc_blind,
+        y_holdout_fpr=None if y_fpr is None else round(y_fpr, 4),
+        y_fpr_ok=y_fpr_ok,
     )
 
 
@@ -176,7 +200,21 @@ def acceptance_from_dataset(
     Xfit = fr.iloc[fit_idx][cols].to_numpy()
     Xhold = fr.iloc[hold_idx][cols].to_numpy()
     Xdrift = fr.loc[np.asarray(gt.drift_mask), cols].to_numpy() if gt.drift_mask is not None else None
-    bundle = build_bundle(name, HealthIndex().fit(Xfit), cols, golden=Xfit, created_at=created_at)
+    # 增量9 #3：驗收一併 fit Y 健康（與部署同口徑），使 gate 涵蓋品質維度——含品質飄移/Y 校準爛的模型不再 PASS。
+    from ..interface import Y_VALUE
+
+    y_health = y_hold = None
+    if Y_VALUE in fr.columns:
+        yfit = fr.iloc[fit_idx][Y_VALUE].to_numpy(dtype=float)
+        if int(np.isfinite(yfit).sum()) >= max(2, Xfit.shape[1] + 1):  # 同 build_and_save_model 的 n>p 閘
+            from ..y_health import YHealthIndex
+
+            try:
+                y_health = YHealthIndex().fit(Xfit, yfit)
+                y_hold = fr.iloc[hold_idx][Y_VALUE].to_numpy(dtype=float)
+            except (ValueError, RuntimeError):
+                y_health = y_hold = None
+    bundle = build_bundle(name, HealthIndex().fit(Xfit), cols, golden=Xfit, created_at=created_at, y_health=y_health)
     return acceptance_report(
-        bundle, Xhold, target_fpr=target_fpr, window=window, drift=Xdrift, compute_fwer=compute_fwer
+        bundle, Xhold, target_fpr=target_fpr, window=window, drift=Xdrift, compute_fwer=compute_fwer, y_holdout=y_hold
     )

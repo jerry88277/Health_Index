@@ -487,8 +487,13 @@ def acceptance_summary(name: str, *, holdout_frac: float = 0.5, window: int = 60
         "drift_recall": None if r.drift_recall is None else round(float(r.drift_recall), 4),
         "recall_ok": r.recall_ok,
         "spc_blind": r.spc_blind,
+        "y_holdout_fpr": None if r.y_holdout_fpr is None else round(float(r.y_holdout_fpr), 4),  # #3 Y 側誤報率
+        "y_fpr_ok": r.y_fpr_ok,
         "passed": bool(r.passed),
         "verdict": r.verdict(),
+        # #2（Option A）：誠實標 FPR 為保守 out-of-sample 估計，非部署模型實測值
+        "estimate_note": "FPR 為『前半 golden 模型』在後半 golden 的 out-of-sample 估計；部署模型用全 golden"
+                         "（資料更多→基準通常更穩），故此值為保守上界、非部署模型實測。",
     }
 
 
@@ -638,8 +643,10 @@ def build_model_for_process(registry_path: str, models_dir: str, process_id: str
     #   FPR 過高＝誤報→操作員警報疲勞→危險，**硬擋不存檔**；
     #   recall 偏低＝漏抓部分 drift，多半是「監控子集」時丟掉帶訊號的參數——是使用者**知情的靈敏度取捨**，
     #   **警告不擋**（fpr 合格仍允許上線，前端顯著標示偵測力下降）。
-    if acc.get("available") and not acc.get("fpr_ok", True):
-        return {"saved": False, "acceptance": acc, "process_id": process_id, "block_reason": "fpr"}
+    # FPR 硬擋擴及 Y 側（#3）：X 側或 Y 側誤報率過高皆阻擋（誤報治理）；recall 仍只警告不擋。
+    if acc.get("available") and (not acc.get("fpr_ok", True) or acc.get("y_fpr_ok") is False):
+        reason = "fpr" if not acc.get("fpr_ok", True) else "y_fpr"
+        return {"saved": False, "acceptance": acc, "process_id": process_id, "block_reason": reason}
     stem = f"{process_id}__v{version}"
     m = build_and_save_model(dataset, golden=garg, models_dir=models_dir, created_at=at, product=stem, features=features)
     rec = store.record_build(process_id, path=f"{stem}.joblib", dataset=dataset, golden_range=m["golden_range"],

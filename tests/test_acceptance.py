@@ -82,3 +82,39 @@ def test_acceptance_uses_holdout_not_fit_set():
     n_golden = int(np.asarray(gt.golden_mask).sum())
     r = acceptance_from_dataset("synthetic", seed=5, holdout_frac=0.5, window=40, compute_fwer=False)
     assert 0 < r.n_golden_holdout < n_golden  # 只用 hold-out 段（約半）
+
+
+def test_acceptance_y_dimension_none_for_sparse_y():
+    """#3：稀疏 Y（synthetic 5%）→ hold-out 窗 Y 觀測不足 → Y 側誤報率不適用回 None（誠實標、不假評），
+    且不影響 X 側 passed。"""
+    r = acceptance_from_dataset("synthetic", seed=5, drift_strength=1.2, window=40, compute_fwer=False)
+    assert r.y_holdout_fpr is None and r.y_fpr_ok is None
+    assert r.fpr_ok is True
+
+
+def test_acceptance_includes_y_dimension_for_dense_clean_y():
+    """#3：dense 且 X→Y 乾淨 → 驗收評得出 Y 側誤報率且過（軟測量在正常段不亂報品質飄移）。
+
+    WHY：原驗收完全不含 Y 維度，含品質飄移/Y 校準爛的模型照樣 PASS。納入 Y 側 hold-out 誤報率後，gate 才涵蓋品質。
+    """
+    import pandas as pd
+
+    from health_index.adapters.dataframe import from_frame
+
+    name = "_acc_y_dense"
+
+    def _b(**kw):
+        rng = np.random.default_rng(0)
+        w = np.array([1.0, 0.5, -0.3])
+        X = rng.normal(0, 1, (400, 3))
+        y = X @ w + rng.normal(0, 0.05, 400)  # 乾淨 X→Y、dense Y
+        df = pd.DataFrame(X, columns=["a", "b", "c"])
+        df["yq"] = y
+        return from_frame(df, x_columns=["a", "b", "c"], y_value="yq", golden=(0, 400), name=name)
+
+    registry.register(name, _b, overwrite=True)
+    try:
+        r = acceptance_from_dataset(name, window=40, compute_fwer=False)
+        assert r.y_holdout_fpr is not None and r.y_fpr_ok is True  # 乾淨→Y 側不誤報、納入 gate
+    finally:
+        registry._BUILDERS.pop(name, None)
