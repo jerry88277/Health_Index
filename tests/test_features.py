@@ -48,10 +48,27 @@ def test_ssd_excludes_ramp_transient_keeps_steady():
     assert all(s >= 30 for s, _ in segs), f"ramp 暫態未被排除：{segs}"
 
 
-def test_ssd_unknown_method_raises():
-    """wavelet 延後增量 → 未知 method 明確 raise（不靜默退化）。"""
-    with pytest.raises(ValueError, match="wavelet"):
-        detect_steady_segments(np.zeros((50, 2)), method="wavelet")
+def test_wavelet_method_segments_and_deterministic():
+    """wavelet：PELT-on-高頻能量 切點 + ramp/std 過濾 → 有效穩態段；確定性（pywt 無 RNG）。
+
+    WHY：wavelet 模式存在理由＝抓 ssd（PELT-on-raw 均值/相關）較不敏感的高頻振盪/暫態邊界。
+    對「穩態 → 高頻振盪暫態 → 穩態」訊號，wavelet 應切出多段（振盪段被切點隔開），且重跑結果一致。
+    """
+    rng = np.random.default_rng(7)
+    s1 = rng.normal(0, 0.3, (150, 2))
+    t = np.arange(80)
+    osc = np.column_stack([2 * np.sin(2 * np.pi * t / 4), 2 * np.sin(2 * np.pi * t / 4 + 1.0)]) + rng.normal(0, 0.1, (80, 2))
+    s2 = rng.normal(0, 0.3, (150, 2))
+    X = np.vstack([s1, osc, s2])
+    segs = detect_steady_segments(X, method="wavelet")
+    assert segs and all(0 <= s < e <= len(X) for s, e in segs)
+    assert detect_steady_segments(X, method="wavelet") == segs  # 確定性（同輸入同輸出）
+
+
+def test_unknown_method_raises():
+    """未知 method 明確 raise（不靜默退化）；wavelet 已是有效模式。"""
+    with pytest.raises(ValueError, match="未知 method"):
+        detect_steady_segments(np.zeros((50, 2)), method="bogus")
 
 
 # ---------------------------------------------------------- 段統計聚合 --

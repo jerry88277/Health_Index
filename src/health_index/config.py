@@ -43,14 +43,15 @@ class Config:
     y_max_lag: int = 10           # X→Y 延遲估計搜尋上限（步）
     x_lag_order: int = 2          # DPCA 時間落後階數；過大惡化 n/p（紅隊 H5）
 
-    # --- 特徵建構層（混合疊加；可解釋視圖，非偵測器；wavelet 延後增量、dep 已備）---
-    seg_method: str = "trim"      # 段定義：trim（預設零調參確定性）| ssd（復用 PELT+seg_ramp/seg_std，不另造門檻）
+    # --- 特徵建構層（混合疊加；可解釋視圖，非偵測器）---
+    seg_method: str = "trim"      # 段定義：trim（預設零調參）| ssd（PELT-on-raw）| wavelet（PELT-on-HF-energy）
     seg_trim_head: int = 10       # trim：丟頭樣本數（暫態 settling）
     seg_trim_tail: int = 10       # trim：丟尾樣本數
     seg_min_len: int = 20         # pseudo-run 最小長度（納入閘；短於此不成段）
     seg_min_obs_factor: float = 1.0  # 統計可靠閘：段內樣本須 ≥ factor·p 才算偏離 z（類比 min_samples_per_dim，與 seg_min_len 分離）
-    seg_statistics: tuple = ("mean", "std", "min", "max", "range", "median")  # 6 統計；count→段級 metadata；mode 連續退化本切片不提供
-    # ssd 復用既有 ssd_penalty/golden_auto_ramp_max/cpd_min_size（不新增 ssd 旋鈕，紅隊 B5）
+    seg_statistics: tuple = ("mean", "std", "min", "max", "range", "median")  # 6 統計；count→段級 metadata；mode 連續退化不提供
+    seg_wavelet: str = "db4"      # wavelet 模式母小波（高頻細節能量→PELT 切點，抓振盪/高頻暫態）
+    # ssd/wavelet 切點後皆復用 ssd_penalty/golden_auto_ramp_max/cpd_min_size 穩態準則（不另造門檻，紅隊 B5）
 
     # --- L2 MSPC ---
     pca_var_explained: float = 0.90  # 保留主成分的累積變異比例

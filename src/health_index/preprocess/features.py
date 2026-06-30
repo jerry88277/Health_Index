@@ -6,10 +6,11 @@ covert drift 天生鈍（見 ``test_features`` 硬閘測試）。主路徑 ``Hea
 function，由獨立 demo endpoint 呼叫，**主路徑函式不得 import 本模組**（結構性不變式：本層出錯不可能
 影響 HI/alarm）。
 
-段定義（兩模式；wavelet 延後增量，dep 已備）：
+段定義（三模式）：
 - ``trim``：段內丟頭丟尾、中間為 1 段（零調參確定性，預設）。
-- ``ssd``：復用 ``detect_change_points``(PELT) + ``seg_ramp``/``seg_std`` 已校準準則
-  （紅隊 B5：不另造未校準門檻，沿用 golden 自動挑選同一準則）。
+- ``ssd``：``detect_change_points``(PELT-on-raw) 切點 + ``seg_ramp``/``seg_std`` 已校準準則（均值/相關變化）。
+- ``wavelet``：PELT 跑在**高頻細節能量**訊號上（``_wavelet_hf_energy``，PyWavelets）+ 同一 ramp/std 準則
+  → 抓 ssd 較不敏感的振盪/高頻暫態邊界。三模式的穩態準則統一復用，不另造門檻（紅隊 B5）。
 
 偏離視圖（紅隊 B1 修正）：每個 [param×stat] 以 golden **window-vs-window block-bootstrap** 建 null
 （連續窗→吸收自相關；非「跨 golden 段 std」——golden 僅第一個 A campaign，trim 下只有 1 段、分母未
@@ -43,6 +44,45 @@ _STAT_FUNCS = {
 _META_COLS = ("seg_index", "seg_start", "seg_end", "seg_len")
 
 
+def _cpd_steady_segments(X: np.ndarray, cpd_signal: np.ndarray, config: Config) -> list[tuple[int, int]]:
+    """PELT 切 ``cpd_signal`` → 候選段 → 復用 seg_ramp/seg_std 已校準穩態準則過濾（ssd/wavelet 共用）。
+
+    ssd 與 wavelet 只差在 PELT 跑在哪個訊號上（raw 多變量 vs 高頻能量）；穩態判定一律復用同一準則，
+    不另造門檻（紅隊 B5）。
+    """
+    n = len(X)
+    bkps = detect_change_points(cpd_signal, config=config)
+    bounds = [0, *bkps, n]
+    segs = [(a, b) for a, b in zip(bounds[:-1], bounds[1:]) if b - a >= config.seg_min_len]
+    Xs = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-9)  # ramp/std 準則用標準化空間（對齊 _auto_select_golden）
+    return [
+        (a, b) for a, b in segs
+        if seg_ramp(Xs, a, b) < config.golden_auto_ramp_max and seg_std(Xs, a, b) > 1e-3
+    ]
+
+
+def _wavelet_hf_energy(X: np.ndarray, wavelet: str) -> np.ndarray:
+    """逐參數高頻細節能量（零化 approximation 後重建）跨參數平均 → (n,) 暫態/振盪訊號。
+
+    用途：wavelet 分段法以此訊號餵 PELT 切點，捕捉 ssd（PELT-on-raw 的均值/相關變化）較不敏感的
+    高頻暫態/振盪邊界。確定性（pywt 無 RNG）。短到無法分解（maxlev<1）→ 回零（→ 單段，由 ramp/std 過濾）。
+    """
+    import pywt
+
+    Xs = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-9)
+    n = len(Xs)
+    w = pywt.Wavelet(wavelet)
+    lev = min(2, pywt.dwt_max_level(n, w.dec_len))
+    if lev < 1:
+        return np.zeros(n)
+    acc = np.zeros(n)
+    for j in range(Xs.shape[1]):
+        coeffs = pywt.wavedec(Xs[:, j], w, level=lev)
+        hp = pywt.waverec([np.zeros_like(coeffs[0]), *coeffs[1:]], w)[:n]  # 零化 approximation → 純高頻重建
+        acc += hp * hp
+    return acc / max(1, Xs.shape[1])
+
+
 def detect_steady_segments(
     X: np.ndarray, *, method: str = "trim", config: Config = DEFAULT
 ) -> list[tuple[int, int]]:
@@ -53,8 +93,8 @@ def detect_steady_segments(
 
     Args:
         X: (n, p) 單一模式的製程參數。
-        method: ``"trim"``（丟頭尾取中間，零調參確定性）| ``"ssd"``（PELT 變點 + seg_ramp/seg_std 穩態準則）。
-        config: 提供 seg_trim_head/tail、seg_min_len，及 ssd 復用的 cpd/ramp 門檻。
+        method: ``"trim"``（丟頭尾取中間）| ``"ssd"``（PELT-on-raw + ramp/std）| ``"wavelet"``（PELT-on-高頻能量 + ramp/std）。
+        config: 提供 seg_trim_head/tail、seg_min_len，及 ssd/wavelet 復用的 cpd/ramp 門檻與 seg_wavelet 母小波。
 
     Returns:
         穩態段 ``[(s, e), ...]``（已濾掉 < ``seg_min_len`` 者）；過短/無乾淨段回 ``[]``。
@@ -71,16 +111,13 @@ def detect_steady_segments(
     if method == "ssd":
         if n < config.seg_min_len:
             return []
-        Xs = (X - X.mean(axis=0)) / (X.std(axis=0) + 1e-9)  # 標準化空間（對齊 seg_ramp/seg_std 準則）
-        bkps = detect_change_points(X, config=config)
-        bounds = [0, *bkps, n]
-        segs = [(a, b) for a, b in zip(bounds[:-1], bounds[1:]) if b - a >= config.seg_min_len]
-        # 復用 golden 自動挑選同一已校準準則（紅隊 B5）：內部近平穩(ramp 低) 且 非退化(std 不近零)
-        return [
-            (a, b) for a, b in segs
-            if seg_ramp(Xs, a, b) < config.golden_auto_ramp_max and seg_std(Xs, a, b) > 1e-3
-        ]
-    raise ValueError(f"未知 method={method!r}（支援 'trim'|'ssd'；wavelet 延後增量，需 PyWavelets）")
+        return _cpd_steady_segments(X, X, config)  # PELT on raw 多變量（均值/相關變化）
+    if method == "wavelet":
+        if n < config.seg_min_len:
+            return []
+        e = _wavelet_hf_energy(X, config.seg_wavelet)
+        return _cpd_steady_segments(X, e.reshape(-1, 1), config)  # PELT on 高頻能量（振盪/高頻暫態）
+    raise ValueError(f"未知 method={method!r}（支援 'trim'|'ssd'|'wavelet'）")
 
 
 def segment_statistics(
