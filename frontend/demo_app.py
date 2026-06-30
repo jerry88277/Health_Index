@@ -760,11 +760,13 @@ def _run(screen, bundle, name, window):
     q_alarmed = [p for p in pts if p.get("y_quality_persisted")]
     if q_alarmed:
         qw = min(q_alarmed, key=lambda p: p["y_map_health"] if p.get("y_map_health") is not None else 1.0)
-        mh, z = qw.get("y_map_health"), qw.get("yhat_drift_z")
-        qcause = "品質飄移：X→Y 殘差超界（X 正常、實際 Y 偏，隱性）" if mh is not None else "品質飄移：預測品質 Ŷ 水準偏移"
-        qh = mh if mh is not None else max(0.0, round(1 - min(abs(z or 0) / 9.0, 1.0), 3))
-        IncidentStore(_INCIDENTS).open_incident(product=pid, window=[qw["start"], qw["end"]], health=qh,
-            confidence=qw.get("confidence", 0.0), top_cause=qcause, detected_at=qw.get("ts"), kind="quality")
+        mh = qw.get("y_map_health")
+        qcause = ("品質飄移：X→Y 殘差超界（X 正常、實際 Y 偏，隱性）" if mh is not None
+                  else "品質飄移：預測品質 Ŷ 水準偏移（純預測外推、窗內無實際 Y）")
+        qd = demo.quality_incident_decision(qw)  # A14/A15：後端決策（純 Ŷ 不升 critical、不借 X confidence、去 magic 9）
+        IncidentStore(_INCIDENTS).open_incident(product=pid, window=[qw["start"], qw["end"]], health=qd["health"],
+            confidence=qd["confidence"], top_cause=qcause, detected_at=qw.get("ts"), kind="quality",
+            severity=qd["severity"])
     xs = [p.get("ts") or p["start"] for p in pts]  # wall-clock（對齊 DCS/historian）；ymap 也用
     fig = _timeline_fig(pts, 0.6)
     ymap = go.Figure()

@@ -692,6 +692,37 @@ def ingest_incidents(bundle_path: str, name: str, store_path: str, *, window: in
     return {"opened": True, "incident_id": inc.id}
 
 
+def quality_incident_decision(qw: dict, *, y_trend_z_max: float | None = None) -> dict:
+    """品質事件 health/severity 決策（可測後端邏輯；紅隊 A14/A15）。UI 只呼叫、不自算（Rule 3）。
+
+    A15（無 Y 證據不開 critical + 去 magic 9）：``y_map_health is None``＝純 Ŷ 水準漂移——Ŷ 由**已漂移的 X
+    外推**得來（推論的推論），窗內無實際 Y 落地證據，且該 X 漂移已被 X 側 health 抓 → 計入 critical＝雙重計數
+    + 警報疲勞。故純 Ŷ 路徑 severity **上限 warning（絕不 critical）**、不計入 critical 品質 KPI；health 用可解釋
+    z_ref（``y_trend_z_max``）取代硬編 9：z=z_ref→0.5、z=2·z_ref→0。
+    A14（不借 X 側 confidence）：severity 由**品質側證據**（map_health / Ŷ-z）定，不經 ``severity_of(health,
+    X_confidence)``——X 側 T² 可信度量的是操作域相似度，與「品質判讀可否信」是不同軸，借用會使品質事件
+    severity 失真。confidence 欄改存品質側指標（有實際 Y 殘差證據＝高；純 Ŷ 外推＝低）。
+
+    Args:
+        qw: ``score_timeline`` 的品質告警窗點（須含 ``y_map_health``/``yhat_drift_z``）。
+        y_trend_z_max: Ŷ 水準漂移 z 門檻（None→``config.y_trend_z_max``，單一 config 治理）。
+
+    Returns:
+        ``{health, severity, confidence, count_in_critical_kpi}``。
+    """
+    zref = DEFAULT.y_trend_z_max if y_trend_z_max is None else float(y_trend_z_max)
+    mh = qw.get("y_map_health")
+    z = abs(qw.get("yhat_drift_z") or 0.0)
+    if mh is not None:  # 有實際 Y 殘差證據（X 正常、實際 Y 偏，X→Y 關係斷）→ 可達 critical
+        qh = float(mh)
+        sev = "critical" if qh < 0.45 else ("warning" if qh < 0.6 else "info")
+        return {"health": round(qh, 4), "severity": sev, "confidence": 1.0, "count_in_critical_kpi": True}
+    # 純 Ŷ 水準漂移（無實際 Y）：可解釋 z_ref、上限 warning、不計 critical KPI
+    qh = max(0.0, round(1.0 - min(z / (2.0 * zref), 1.0), 3))  # z=z_ref→0.5、z=2·z_ref→0（取代硬編 9）
+    sev = "warning" if z >= zref else "info"  # 絕不升 critical（A15：無 Y 證據 + 與 X 側雙重計數）
+    return {"health": qh, "severity": sev, "confidence": 0.4, "count_in_critical_kpi": False}
+
+
 def event_overview(store_path: str, *, avg_loss_per_unplanned_stop: float = 1_000_000.0) -> dict:
     """事件頁資料（現場工程師閉環 + 處長 KPI/ROI）：事件清單 + stats(含 MTTR) + ROI 估算。"""
     store = IncidentStore(store_path)
