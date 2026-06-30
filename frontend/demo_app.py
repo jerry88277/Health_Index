@@ -87,6 +87,7 @@ app.layout = html.Div(
                                         options=[{"label": " 作業員", "value": "operator"},
                                                  {"label": " 工程師", "value": "engineer"}],
                                         style={"display": "inline-block", "marginRight": "12px", "fontSize": "13px"}),
+                         _btn("段分析", "nav-segview", style={"marginRight": "8px"}),
                          _btn("事件", "nav-events", style={"marginRight": "8px"}), _btn("總覽", "nav-home")]),
                  ]),
         html.Div(id="scr-home"),
@@ -94,6 +95,7 @@ app.layout = html.Div(
         html.Div(id="scr-results", style={"display": "none"}),
         html.Div(id="scr-events", style={"display": "none"}),
         html.Div(id="scr-history", style={"display": "none"}),
+        html.Div(id="scr-segview", style={"display": "none"}),
         dcc.Download(id="dl-incidents"),
         dcc.Download(id="dl-timeline"),
     ],
@@ -358,9 +360,57 @@ def _history_view():
     ]
 
 
+_SEG_STATS = ["mean", "std", "min", "max", "range", "median"]
+
+
+def _segview_view():
+    """段分析（可解釋視圖）：兩 step——① 段定義（method）② [參數×統計] 偏離視覺化。非告警（is_advisory）。"""
+    return [
+        html.Div(style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"}, children=[
+            html.Div([html.H2("段分析（可解釋視圖）", style={"margin": "0 0 4px", "fontWeight": 500}),
+                      html.Div("穩態段定義 + [參數×統計] 偏離——可解釋／品質溝通，非告警",
+                               style={"color": "#51607a", "fontSize": "14px"})]),
+            _btn("← 回總覽", "btn-segview-home"),
+        ]),
+        html.Div("⚠ 此頁為可解釋視圖、非告警。逐參數段統計對「保邊際、破相關」型隱性飄移天生鈍——主訊號仍看健康指標(L2 "
+                 "SPE)。偏離排序已做 Holm 多重比較校正；落在雜訊帶內＝統計上與 golden 無異，勿當告警依據。",
+                 style={"background": "#fff7ed", "color": "#9a3412", "border": "1px solid #fed7aa",
+                        "borderRadius": "10px", "padding": "10px 14px", "fontSize": "13px", "margin": "12px 0"}),
+        _card([
+            html.Div("① 段定義", style={"fontWeight": 500, "marginBottom": "8px"}),
+            html.Div(style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "center"}, children=[
+                html.Div([html.Label("資料源：", style={"fontSize": "13px", "marginRight": "6px"}),
+                          dcc.Dropdown(id="seg-dataset", clearable=False, value="synthetic", style={"width": "240px",
+                                       "display": "inline-block", "verticalAlign": "middle"},
+                                       options=[{"label": catalog.describe(d)["title"], "value": d}
+                                                for d in demo.available_datasets()])]),
+                html.Div([html.Label("分段法：", style={"fontSize": "13px", "marginRight": "6px"}),
+                          dcc.RadioItems(id="seg-method", value="trim", inline=True,
+                                         options=[{"label": " 去頭尾取中間 (trim)", "value": "trim"},
+                                                  {"label": " 穩態偵測 (ssd)", "value": "ssd"}],
+                                         style={"display": "inline-block", "fontSize": "13px"})]),
+            ]),
+            html.Div("② 選 [參數 × 統計]（比較 golden vs 比較區／drift 段）",
+                     style={"fontWeight": 500, "margin": "14px 0 8px"}),
+            html.Div("監控參數（預設全選）：", style={"fontSize": "13px", "color": "#51607a", "marginBottom": "4px"}),
+            dcc.Checklist(id="seg-params", options=[], value=[], style={"fontSize": "13px"},
+                          labelStyle={"display": "inline-block", "marginRight": "14px"}),
+            html.Div("統計量（min/max/range 於段長接近 golden 時樣本不足→標 NaN，屬誠實邊界）：",
+                     style={"fontSize": "13px", "color": "#51607a", "margin": "8px 0 4px"}),
+            dcc.Checklist(id="seg-stats", value=_SEG_STATS,
+                          options=[{"label": " " + s, "value": s} for s in _SEG_STATS],
+                          style={"fontSize": "13px"}, labelStyle={"display": "inline-block", "marginRight": "14px"}),
+            _btn("分析", "btn-segview-run", primary=True, style={"marginTop": "12px"}),
+        ], style={"margin": "12px 0"}),
+        dcc.Loading(html.Div(id="segview-status", style={"fontSize": "13px", "color": "#51607a", "margin": "8px 0"})),
+        dcc.Loading(dcc.Graph(id="segview-fig", config={"displayModeBar": False})),
+        dcc.Loading(html.Div(id="segview-table", style={"marginTop": "8px"})),
+    ]
+
+
 # 初始填入各屏內容（依 id 對應，避免索引脆弱）
 _VIEWS = {"scr-home": _home_view, "scr-wizard": _wizard_view, "scr-results": _results_view,
-          "scr-events": _events_view, "scr-history": _history_view}
+          "scr-events": _events_view, "scr-history": _history_view, "scr-segview": _segview_view}
 for _child in app.layout.children:
     if getattr(_child, "id", None) in _VIEWS:
         _child.children = _VIEWS[_child.id]()
@@ -372,11 +422,13 @@ for _child in app.layout.children:
               Input("go-results", "n_clicks"), Input("btn-results-home", "n_clicks"),
               Input("nav-events", "n_clicks"), Input("btn-events-home", "n_clicks"),
               Input("btn-hist-home", "n_clicks"),
+              Input("nav-segview", "n_clicks"), Input("btn-segview-home", "n_clicks"),
               prevent_initial_call=True)
 def _route(*_):
     t = ctx.triggered_id
     return {"nav-home": "home", "btn-results-home": "home", "go-results": "results",
-            "nav-events": "events", "btn-events-home": "home", "btn-hist-home": "home"}.get(t, no_update)
+            "nav-events": "events", "btn-events-home": "home", "btn-hist-home": "home",
+            "nav-segview": "segview", "btn-segview-home": "home"}.get(t, no_update)
 
 
 @app.callback(Output("bundle-store", "data", allow_duplicate=True), Output("screen", "data", allow_duplicate=True),
@@ -444,12 +496,13 @@ def _wiz_bind(wp):
 
 
 @app.callback(Output("scr-home", "style"), Output("scr-wizard", "style"), Output("scr-results", "style"),
-              Output("scr-events", "style"), Output("scr-history", "style"), Input("screen", "data"))
+              Output("scr-events", "style"), Output("scr-history", "style"), Output("scr-segview", "style"),
+              Input("screen", "data"))
 def _show_screen(screen):
     vis, hid = {"display": "block"}, {"display": "none"}
     return (vis if screen == "home" else hid, vis if screen == "wizard" else hid,
             vis if screen == "results" else hid, vis if screen == "events" else hid,
-            vis if screen == "history" else hid)
+            vis if screen == "history" else hid, vis if screen == "segview" else hid)
 
 
 @app.callback(Output("stepper", "children"), Output("wstep-left", "children"),
@@ -1078,6 +1131,75 @@ def _restore_proc(clicks, actor):
     at = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
     demo.restore_process(_REGISTRY, t["pid"], by=(actor or "").strip() or "未具名", at=at)
     return _dt.datetime.now().timestamp()
+
+
+# ---------- 段分析（可解釋視圖）----------
+@app.callback(Output("seg-params", "options"), Output("seg-params", "value"), Input("seg-dataset", "value"))
+def _segview_params(name):
+    """依資料源填監控參數選項（預設全選）。"""
+    try:
+        cols = demo.dataset_overview(name)["x_columns"]
+    except Exception:
+        return [], []
+    return [{"label": c, "value": c} for c in cols], cols
+
+
+@app.callback(Output("segview-status", "children"), Output("segview-fig", "figure"), Output("segview-table", "children"),
+              Input("btn-segview-run", "n_clicks"),
+              State("seg-dataset", "value"), State("seg-method", "value"),
+              State("seg-params", "value"), State("seg-stats", "value"), prevent_initial_call=True)
+def _segview_run(_n, name, method, params, stats):
+    """呼叫 demo.segment_view → trace 圖（golden/比較區段帶）+ [參數×統計] 偏離排序表（Holm，非告警）。"""
+    if not params:
+        return html.Span("⚠ 至少選 1 個監控參數", style={"color": "#ef6c00"}), go.Figure(), no_update
+    import warnings as _w
+    try:
+        with _w.catch_warnings():
+            _w.simplefilter("ignore")
+            v = demo.segment_view(name, method=method, features=params, stats=stats or None)
+    except Exception as e:
+        return html.Span(f"❌ 分析失敗：{e}", style={"color": _BAD}), go.Figure(), no_update
+
+    fig = go.Figure()
+    shown = v["params"][:6]  # 限 6 條 trace 保可讀
+    for p in shown:
+        tr = v["traces"][p]
+        fig.add_trace(go.Scatter(x=tr["x"], y=tr["v"], mode="lines", name=p, line={"width": 1}))
+    for s, e in v["golden"]["runs"]:
+        fig.add_vrect(x0=s, x1=e, fillcolor="rgba(16,185,129,0.10)", line_width=0)
+    for s, e in v["query"]["segments"]:
+        fig.add_vrect(x0=s, x1=e, fillcolor="rgba(99,102,241,0.12)", line_width=0)
+    fig.update_layout(height=300, margin={"l": 44, "r": 10, "t": 30, "b": 28},
+                      title=f"參數 trace（綠帶=golden、紫帶=比較區段；顯示前 {len(shown)}/{len(v['params'])} 參數）",
+                      legend={"orientation": "h", "y": -0.22}, font={"size": 11})
+
+    d = v["drift"]
+    th = {"textAlign": "left", "padding": "4px 8px", "borderBottom": "2px solid #e3e8ef", "color": "#51607a"}
+    td = {"padding": "4px 8px", "borderBottom": "1px solid #eef2ff"}
+    head = html.Tr([html.Th(h, style=th) for h in ["參數", "統計", "段", "偏離 z", "Holm p", "判定"]])
+    rows = []
+    for c in d["cells"][:20]:
+        if c["z"] is None:
+            verdict, zt, pt = html.Span("樣本不足", style={"color": "#94a3b8"}), "—", "—"
+        elif c["significant_holm"]:
+            verdict = html.Span("偏離（Holm 顯著）", style={"color": _BAD, "fontWeight": 500})
+            zt, pt = f"{c['z']:+.2f}", f"{c['p_raw']:.3f}"
+        else:
+            verdict = html.Span("雜訊內", style={"color": "#51607a"})
+            zt, pt = f"{c['z']:+.2f}", f"{c['p_raw']:.3f}"
+        seg = c["seg_global"]
+        rows.append(html.Tr([html.Td(c["param"], style=td), html.Td(c["stat"], style=td),
+                             html.Td(f"[{seg[0]},{seg[1]})" if seg else "—", style=td),
+                             html.Td(zt, style=td), html.Td(pt, style=td), html.Td(verdict, style=td)]))
+    table = html.Table([html.Thead(head), html.Tbody(rows)],
+                       style={"width": "100%", "fontSize": "13px", "borderCollapse": "collapse"})
+    status = html.Div([
+        html.Div(v["note"], style={"marginBottom": "4px"}),
+        html.Span(f"Holm 顯著 {d['n_significant']}/{d['n_comparisons']} 個 [參數×統計]；雜訊帶 z≈{d['chance_band_z']}；"
+                  f"分段法 {v['method']}、{v['query']['n_segments']} 段（前 20 筆，依 |z| 排序）。",
+                  style={"fontWeight": 500}),
+    ])
+    return status, fig, table
 
 
 if __name__ == "__main__":
