@@ -69,6 +69,15 @@ def test_feature_subset_rejects_under_two(tmp_path):
                                   features=["x00"], seed=5, drift_strength=1.2)
 
 
+def test_score_timeline_reports_subsample_coverage(tmp_path):
+    """第二波（紅隊 A5）：降採樣時誠實回報覆蓋率——窗間空隙未評分（該段飄移可能漏抓），不假裝全程已評。"""
+    m = demo.build_and_save_model("synthetic", models_dir=str(tmp_path), created_at="t", seed=5, drift_strength=1.2)
+    sub = demo.score_timeline(m["bundle_path"], "synthetic", window=60, max_windows=5, seed=5, drift_strength=1.2)
+    assert sub["subsampled"] is True and sub["coverage_frac"] < 1.0  # 降採樣→部分覆蓋
+    full = demo.score_timeline(m["bundle_path"], "synthetic", window=60, seed=5, drift_strength=1.2)
+    assert full["subsampled"] is False and full["coverage_frac"] >= 0.9  # 全解析→近全覆蓋
+
+
 def test_acceptance_reflects_user_golden():
     """增量9 根因修復：驗收吃使用者選的 golden（非固定真值段）——季節性/時序資料圈平穩段即可過 FPR gate。
 

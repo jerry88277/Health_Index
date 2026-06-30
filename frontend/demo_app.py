@@ -744,7 +744,9 @@ def _run(screen, bundle, name, window):
     n_alarm = tl["n_alarms"]
     title = bundle.get("display_name") or name
     msg = f"⚠ {title}：偵測到 {n_alarm} 個告警窗（製程關係偏移）" if n_alarm else f"✅ {title}：全程健康"
-    note = (f"　·　高維/長資料集已降採樣為 {tl['n_windows']} 窗顯示" if tl.get("subsampled") else "")
+    note = (f"　·　⚠ 高維/長資料集已降採樣：僅 {tl['n_windows']} 窗、約 {tl.get('coverage_frac', 1) * 100:.0f}% 資料被評分，"
+            "窗間空隙未評分（該段飄移可能漏抓）；要全覆蓋請縮小窗長或指定 max_windows"
+            if tl.get("subsampled") else "")
     # 粗→細中層：最嚴重窗摘要（① 健康指標總覽 → ② 為什麼超標 → ③ 點窗看製程參數）
     worst_line = html.Span()
     if alarmed:

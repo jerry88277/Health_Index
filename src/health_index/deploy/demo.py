@@ -332,7 +332,8 @@ def score_timeline(
         "n_quality_alarms": int(sum(p.get("y_quality_persisted", False) for p in points)),  # 增量8 品質飄移持續告警窗
         "golden_yhat_mean": round(gy_mu, 4) if gy_mu is not None else None,
         "golden_yhat_std": round(gy_sd, 4) if gy_sd is not None else None,
-        "subsampled": subsampled,         # 高維/長資料集降採樣顯示（前端標示）
+        "subsampled": subsampled,         # 高維/長資料集降採樣（step>window，窗間有未評分空隙）
+        "coverage_frac": round(min(1.0, len(points) * window / n), 3) if n else 1.0,  # 實際被評分的資料比例
         "n_windows": len(points),
     }
 
