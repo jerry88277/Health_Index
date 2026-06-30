@@ -714,8 +714,8 @@ def _timeline_fig(pts, threshold):
                   marker={"color": colors, "size": 9}, line={"color": "#999"}, name="健康指標", customdata=custom,
                   hovertemplate="時間 %{x}<br>健康度 %{y:.3f}<br>SPE %{customdata[0]}　GSI %{customdata[1]}<br>%{customdata[2]}<extra></extra>"))
     fig.add_trace(go.Scatter(x=xs, y=[p["confidence"] for p in pts], mode="lines",
-                  line={"color": _CONF, "dash": "dot"}, name="可信度",
-                  hovertemplate="時間 %{x}<br>可信度 %{y:.3f}<extra></extra>"))
+                  line={"color": _CONF, "dash": "dot"}, name="可信度", customdata=[[p["start"]] for p in pts],
+                  hovertemplate="時間 %{x}<br>可信度 %{y:.3f}<extra></extra>"))  # A21：帶 start，點可信線下鑽不再走錯位退路
     al = [(p.get("ts") or p["start"], p["health_index"], p["start"]) for p in pts if p["persisted_alarm"]]
     if al:
         fig.add_trace(go.Scatter(x=[a[0] for a in al], y=[a[1] for a in al], mode="markers",
@@ -857,10 +857,12 @@ def _detail(click, role, bundle, name, window):
     pt = click["points"][0]
     w = int(window or 60)
     cd = pt.get("customdata")  # 末位為窗 start（x 軸已改 wall-clock，不能用 x 反推）
-    if cd:
-        start = int(cd[-1])
-    else:  # 退路：非重疊窗 → pointIndex × 窗長
-        start = int(pt.get("pointNumber", pt.get("pointIndex", 0))) * w
+    # A21：所有可點 trace（健康/可信/告警）均帶 start customdata；缺失＝點到不可下鑽元素（如門檻線）→ 明確拒絕，
+    # 不用脆弱退路 pointNumber×window（降採樣 step≠window 時系統性錯位到別的窗）。
+    if not cd:
+        return html.Span("此處不可下鑽，請點「健康指標」曲線上的點或「告警」✕ 標記。",
+                         style={"color": "#ef6c00", "fontSize": "13px"})
+    start = int(cd[-1])
     end = start + w
     try:
         d = demo.window_detail(bundle["bundle_path"], name, start, end, compute_fwer=True,
