@@ -484,6 +484,14 @@ def score_timeline(
         "subsampled": subsampled,         # 高維/長資料集降採樣（step>window，窗間有未評分空隙）
         "coverage_frac": round(min(1.0, len(points) * window / n), 3) if n else 1.0,  # 實際被評分的資料比例
         "n_windows": len(points),
+        "step": int(step),  # 評分步距（=window 連續；>window 降採樣）
+        # A6：降採樣下 persistence/consecutive 跨**非相鄰**窗（相隔 step）→ 持續語義（濾單窗毛刺）失真、
+        # n_alarms 不可跨不同降採樣設定的資料集直接比較。揭露口徑、不靜默。
+        "persistence_spans_gaps": bool(subsampled),
+        "persistence_note": (
+            f"降採樣中（step={step}>窗長{window}）：『連續 N 窗』是 N 個被抽樣窗、非物理相鄰窗，persistence 濾毛刺"
+            "語義已改變，n_alarms 不可與不同降採樣的資料集直接比較。要嚴格物理相鄰請縮小資料或調大 max_windows。"
+            if subsampled else None),
     }
 
 
