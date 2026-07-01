@@ -299,6 +299,7 @@ def build_and_save_model(
     created_at: str,
     product: str | None = None,
     features: list[str] | None = None,
+    window: int | None = None,
     **build_kwargs,
 ) -> dict:
     """步驟2：以選定 golden 範圍建模 → bundle → 存檔。回傳 bundle 路徑與指紋摘要。
@@ -310,9 +311,10 @@ def build_and_save_model(
         created_at: 建模時間字串（git 時間權威；UI 由呼叫端提供）。
         product: 模型/產品識別（None→用 name）。
         features: 監控特徵子集（None→全用）。存入 bundle.x_columns，scoring 自動只用這些欄（≥2，PCA 需求）。
+        window: 部署評分窗長（A20）→ 存入 bundle.window 作單一真相；下鑽/匯出/總覽燈預設讀此。None→不設（消費端預設）。
 
     Returns:
-        {bundle_path, product, golden_range, fingerprint_hi, n_golden, x_columns}。
+        {bundle_path, product, golden_range, fingerprint_hi, n_golden, x_columns, window}。
     """
     ds, gt = registry.build(name, **build_kwargs)
     cols = list(gt.x_columns)
@@ -341,7 +343,7 @@ def build_and_save_model(
             except (ValueError, RuntimeError) as e:  # 訓練不足/常數X等 → 無 Y 健康；warn surface 不靜默（Rule 12）
                 warnings.warn(f"YHealthIndex fit 失敗（{e}）→ bundle 無 Y 健康", RuntimeWarning, stacklevel=2)
                 y_health = None
-    bundle = build_bundle(product or name, hi, cols, golden=Xg, created_at=created_at, y_health=y_health)
+    bundle = build_bundle(product or name, hi, cols, golden=Xg, created_at=created_at, y_health=y_health, window=window)
     os.makedirs(models_dir, exist_ok=True)
     path = os.path.join(models_dir, f"{product or name}.joblib")
     save(bundle, path)
@@ -354,6 +356,7 @@ def build_and_save_model(
         "n_golden": int(len(Xg)),
         "has_y_health": bundle.y_health is not None,  # 有軟量測→demo 可顯示 Ŷ + Y-confirmed 可信度
         "x_columns": list(cols),  # 實際監控的特徵子集（供前端顯示「監控 7/10 參數」）
+        "window": bundle.window,  # A20：存入的評分窗長（單一真相）
     }
 
 
@@ -375,7 +378,7 @@ def score_timeline(
     bundle_path: str,
     name: str,
     *,
-    window: int = 60,
+    window: int | None = None,
     compute_fwer: bool = False,
     persistence_k: int | None = None,
     max_windows: int | None = None,
@@ -383,6 +386,7 @@ def score_timeline(
 ) -> dict:
     """步驟4：載入模型 → 重放資料集 → 回傳健康指標時間線（含已知 drift 標記供對照）。
 
+    window：None→讀 **bundle.window**（A20 單一真相）→ 仍無則 60。確保時間線/下鑽/匯出用同一窗長口徑。
     max_windows：時間線最多窗數（None→自動：高維 p>64 取 40、否則 150）。超過則加大 step **降採樣**，
     使高維資料集（如 uci p=128，逐窗 L4 permutation 昂貴）也能在互動時間內渲染，不卡 LOADING。
 
@@ -390,6 +394,7 @@ def score_timeline(
         {product, window, points:[...], n_alarms, has_y_mapping, subsampled, n_windows}。
     """
     bundle = load(bundle_path)  # verify=True：指紋不符即拒載
+    window = window if window is not None else (getattr(bundle, "window", None) or 60)  # A20：單一真相
     ds, gt = registry.build(name, **build_kwargs)
     src = FrameSource(ds.frame, list(bundle.x_columns))  # 用模型實際監控的特徵子集（非全集）→ 子集模型維度對齊
     n = len(ds.frame)
@@ -839,7 +844,8 @@ def build_model_for_process(registry_path: str, models_dir: str, process_id: str
         reason = "fpr" if not acc.get("fpr_ok", True) else "y_fpr"
         return {"saved": False, "acceptance": acc, "process_id": process_id, "block_reason": reason}
     stem = f"{process_id}__v{version}"
-    m = build_and_save_model(dataset, golden=garg, models_dir=models_dir, created_at=at, product=stem, features=features)
+    m = build_and_save_model(dataset, golden=garg, models_dir=models_dir, created_at=at, product=stem,
+                             features=features, window=int(window))  # A20：部署窗長存入 bundle 作單一真相
     rec = store.record_build(process_id, path=f"{stem}.joblib", dataset=dataset, golden_range=m["golden_range"],
                              fingerprint_hi=m["fingerprint_hi"], has_y_health=m["has_y_health"],
                              acceptance=acc if acc.get("available") else None, by=by, at=at)
@@ -876,9 +882,10 @@ def _score_current(models_dir: str, model_rec: dict, window: int) -> tuple:
     """評現役模型最後一窗的健康燈。回傳 (health, alarm, status)；資料源/檔不可得→(None,None,'data_unavailable')。"""
     try:
         b = load(os.path.join(models_dir, model_rec["path"]))
+        w = getattr(b, "window", None) or window  # A20：燈用該模型 bundle.window（單一真相），無則退回傳入
         ds, _gt = registry.build(model_rec["dataset"])
         X = ds.frame[list(b.x_columns)].to_numpy(dtype=float)
-        Xw = X[-window:] if len(X) >= window else X
+        Xw = X[-w:] if len(X) >= w else X
         alarm = bool(b.health.alarm(Xw, compute_fwer=False))
         return round(float(b.health.health_index(Xw)), 3), alarm, ("alarm" if alarm else "healthy")
     except Exception:  # 檔損/指紋漂移/資料源不可得 → 誠實標，不杜撰健康度

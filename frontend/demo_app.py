@@ -708,18 +708,22 @@ def _timeline_fig(pts, threshold):
     """健康時間線圖（共用：_run 初繪 + 門檻 slider 重繪）。threshold 控制門檻線位置（what-if）。"""
     xs = [p.get("ts") or p["start"] for p in pts]
     colors = [_REGION_COLOR[p["region"]] for p in pts]
-    custom = [[p["spe_mean"], p["gsi_mean"], _REGION_ZH[p["region"]], p["start"]] for p in pts]  # 末位 start 供下鑽
+    custom = [[p["spe_mean"], p["gsi_mean"], _REGION_ZH[p["region"]], p["start"], p["end"] - p["start"]]
+              for p in pts]  # 末兩位 [start, win]：A20 下鑽用該點確切窗（=bundle.window 掃出）、非重算
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=xs, y=[p["health_index"] for p in pts], mode="lines+markers",
                   marker={"color": colors, "size": 9}, line={"color": "#999"}, name="健康指標", customdata=custom,
                   hovertemplate="時間 %{x}<br>健康度 %{y:.3f}<br>SPE %{customdata[0]}　GSI %{customdata[1]}<br>%{customdata[2]}<extra></extra>"))
     fig.add_trace(go.Scatter(x=xs, y=[p["confidence"] for p in pts], mode="lines",
-                  line={"color": _CONF, "dash": "dot"}, name="可信度", customdata=[[p["start"]] for p in pts],
-                  hovertemplate="時間 %{x}<br>可信度 %{y:.3f}<extra></extra>"))  # A21：帶 start，點可信線下鑽不再走錯位退路
-    al = [(p.get("ts") or p["start"], p["health_index"], p["start"]) for p in pts if p["persisted_alarm"]]
+                  line={"color": _CONF, "dash": "dot"}, name="可信度",
+                  customdata=[[p["start"], p["end"] - p["start"]] for p in pts],  # A21+A20：帶 [start,win] 下鑽不錯位
+                  hovertemplate="時間 %{x}<br>可信度 %{y:.3f}<extra></extra>"))
+    al = [(p.get("ts") or p["start"], p["health_index"], p["start"], p["end"] - p["start"])
+          for p in pts if p["persisted_alarm"]]
     if al:
         fig.add_trace(go.Scatter(x=[a[0] for a in al], y=[a[1] for a in al], mode="markers",
-                      marker={"symbol": "x", "color": _BAD, "size": 14}, name="告警", customdata=[[a[2]] for a in al]))
+                      marker={"symbol": "x", "color": _BAD, "size": 14}, name="告警",
+                      customdata=[[a[2], a[3]] for a in al]))  # 末兩位 [start, win]
     fig.add_hline(y=threshold, line_dash="dash", line_color="#888", annotation_text=f"門檻 {threshold}")
     fig.update_layout(yaxis={"title": "健康指標 (1=健康)", "range": [0, 1.05]},
                       xaxis={"title": "時間"}, height=420, legend={"orientation": "h"})
@@ -739,7 +743,7 @@ def _run(screen, bundle, name, window):
     name = bundle.get("dataset") or name      # 製程綁定的資料源（解耦後評分用 dataset，非 process_id）
     pid = bundle.get("process_id") or name    # incident 綁 process_id（解孤兒事件對齊）
     try:
-        tl = demo.score_timeline(bundle["bundle_path"], name, window=int(window or 60))
+        tl = demo.score_timeline(bundle["bundle_path"], name, window=None)  # A20：用 bundle.window 單一真相（非精靈輸入）
     except Exception as e:
         return html.Span(f"❌ 模擬失敗：{e}", style={"color": _BAD}), go.Figure(), go.Figure(), no_update
     pts = tl["points"]
@@ -855,15 +859,15 @@ def _detail(click, role, bundle, name, window):
         return ""
     name = bundle.get("dataset") or name  # 與 _run 一致：評分用製程綁定的資料源
     pt = click["points"][0]
-    w = int(window or 60)
-    cd = pt.get("customdata")  # 末位為窗 start（x 軸已改 wall-clock，不能用 x 反推）
-    # A21：所有可點 trace（健康/可信/告警）均帶 start customdata；缺失＝點到不可下鑽元素（如門檻線）→ 明確拒絕，
-    # 不用脆弱退路 pointNumber×window（降採樣 step≠window 時系統性錯位到別的窗）。
-    if not cd:
+    cd = pt.get("customdata")  # 末兩位 = [窗 start, 窗長 win]（x 軸已改 wall-clock，不能用 x 反推）
+    # A21+A20：所有可點 trace（健康/可信/告警）均帶 [start,win]；缺失＝點到不可下鑽元素（如門檻線）→ 明確拒絕，
+    # 不用脆弱退路 pointNumber×window（降採樣 step≠window 系統性錯位）。win 取自該點（=bundle.window 掃出的確切窗，
+    # A20 單一真相），非重算 start+精靈窗長 → 下鑽窗與時間線窗一致。
+    if not cd or len(cd) < 2:
         return html.Span("此處不可下鑽，請點「健康指標」曲線上的點或「告警」✕ 標記。",
                          style={"color": "#ef6c00", "fontSize": "13px"})
-    start = int(cd[-1])
-    end = start + w
+    start, win = int(cd[-2]), int(cd[-1])
+    end = start + win
     try:
         d = demo.window_detail(bundle["bundle_path"], name, start, end, compute_fwer=True,
                                tag_map=demo.tag_map_for(_MODELS_DIR, name))

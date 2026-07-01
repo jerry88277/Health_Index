@@ -61,6 +61,8 @@ class ModelBundle:
     fingerprint_sub: dict[str, float]
     versions: dict[str, str] = field(default_factory=_versions)
     y_health: object | None = None
+    window: int | None = None  # 紅隊 A20：模型部署評分窗長（單一真相）——下鑽/匯出/總覽燈一律讀此、不各自帶；
+                               # None＝舊 bundle（getattr fallback 到呼叫端預設）。不入指紋（窗長與 fit 時凍結的控制限解耦）。
 
     def verify(self, *, rtol: float = 1e-6, atol: float = 1e-9) -> None:
         """重放黃金指紋，比對存檔輸出；不符即 ``BundleIntegrityError``（fail-loud）。"""
@@ -86,6 +88,7 @@ def build_bundle(
     golden: np.ndarray,
     created_at: str,
     y_health: object | None = None,
+    window: int | None = None,
     n_fingerprint: int = 20,
 ) -> ModelBundle:
     """從已 fit 的 HealthIndex + 黃金資料建 bundle，並擷取重放指紋。
@@ -120,6 +123,7 @@ def build_bundle(
         fingerprint_hi=float(health.health_index(fx)),
         fingerprint_sub={k_: float(v) for k_, v in health.subscores(fx).items()},
         y_health=y_health,
+        window=None if window is None else int(window),
     )
 
 
