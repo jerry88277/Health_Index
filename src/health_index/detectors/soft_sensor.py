@@ -1,8 +1,9 @@
 """L3 軟測量（soft sensor）：GPR 預測 Ŷ + split-Conformal 可信度。
 
 取 AVM 初衷：以虛擬量測 Ŷ 取代破壞性/昂貴抽樣。可信度層採 **Conformal Prediction（CP）**
-取代 AVM RI（紅隊 H1/C3）——CP 給 distribution-free、**有限樣本邊際覆蓋保證** P(y∈Ĉ)≥1−α，
-而 RI 是 ad-hoc 雙模型重疊、無保證。base estimator 為 GPR（小資料友善、確定性）。
+取代 AVM RI（紅隊 H1/C3）——CP **理論上**給 distribution-free、有限樣本邊際覆蓋 P(y∈Ĉ)≥1−α；惟本專案
+calibration 為 **in-sample 近似**（非嚴格 held-out）→ 覆蓋為**近似、非嚴格保證**，GPR 過擬合下 cp_q_ 偏窄、
+可能**窄於名目**（紅隊 A11 誠實標）；而 RI 是 ad-hoc 雙模型重疊、無理論基礎。base estimator 為 GPR（小資料友善、確定性）。
 
 可信度雙路（紅隊 H1）：
 - **有標籤且 calibration 足量**：split-CP 預測區間（本模組）。
@@ -105,7 +106,7 @@ class SoftSensor:
         return self.cp_q_ is not None
 
     def predict_interval(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """回傳 split-CP 預測區間 (lo, hi)，覆蓋率有限樣本保證 ≥ 1−α。
+        """回傳 split-CP 預測區間 (lo, hi)，覆蓋率有限樣本 ≥ 1−α（**in-sample 校準之近似、非嚴格保證**，紅隊 A11）。
 
         Raises:
             RuntimeError: 未校準或 calibration 不足（cp_available=False）；上層應改用 GSI 可信度。
@@ -176,7 +177,7 @@ class PLSSoftSensor:
         return self.cp_q_ is not None
 
     def predict_interval(self, X: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """split-CP 預測區間 (lo, hi)，覆蓋率有限樣本保證 ≥ 1−α。"""
+        """split-CP 預測區間 (lo, hi)，覆蓋率有限樣本 ≥ 1−α（in-sample 校準之近似、非嚴格保證，紅隊 A11）。"""
         if not self.cp_available:
             raise RuntimeError("CP 未校準或 calibration 不足；改用 GSI 無標籤可信度（紅隊 H1）")
         yhat = self.predict(X)

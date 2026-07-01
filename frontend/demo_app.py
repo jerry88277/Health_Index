@@ -784,7 +784,7 @@ def _run(screen, bundle, name, window):
         lo = [h - b for h, b in zip(yhat, band)]
         ymap.add_trace(go.Scatter(x=xs + xs[::-1], y=up + lo[::-1], fill="toself",
                        fillcolor="rgba(21,101,192,0.12)", line={"color": "rgba(0,0,0,0)"},
-                       name="conformal 帶", hoverinfo="skip"))
+                       name="conformal 帶（近似覆蓋）", hoverinfo="skip"))
         ymap.add_trace(go.Scatter(x=xs, y=yhat, mode="lines", line={"color": _CONF}, name="Ŷ 軟測量預測"))
         ya = [(p.get("ts") or p["start"], p["y_actual_mean"]) for p in pts if p.get("y_actual_mean") is not None]
         if ya:
@@ -822,6 +822,7 @@ def _run(screen, bundle, name, window):
     q_line = html.Span()
     if tl.get("has_y_mapping"):
         n_quality = tl.get("n_quality_alarms", 0)
+        n_unreliable = tl.get("n_quality_unreliable", 0)  # A13：Ŷ 外推、無實際 Y 可驗證的窗
         n_obs = sum(1 for p in pts if p.get("y_observed"))
         sparse = n_obs < max(1, len(pts)) * 0.5  # Y 量測稀疏 → 誠實標隱性飄移只在有 Y 樣本的窗可判
         if n_quality:
@@ -830,6 +831,10 @@ def _run(screen, bundle, name, window):
         else:
             qtxt = "③ 品質維度：✅ 預測品質穩定" + ("（Y 量測稀疏：隱性品質飄移僅在 Y 樣本到達的窗可判）" if sparse else "")
             qcol = _OK if not sparse else "#b26a00"
+        if n_unreliable:  # A13：外推窗 Ŷ→prior mean 使 z 縮小 → 不可當「品質穩定」憑據，誠實標「不可信、改看 X 側」
+            qtxt += (f"　⚠ 另有 {n_unreliable} 窗 Ŷ 外推（X 離建模域），Ŷ-drift 判讀不可信、"
+                     "非真穩定，品質改看 X 側告警（A13）")
+            qcol = "#b26a00" if qcol == _OK else qcol
         q_line = html.Div(qtxt, style={"color": qcol, "fontSize": "13px", "marginTop": "6px"})
     status = html.Div([
         html.Div("① 健康指標", style={"color": "#94a3b8", "fontSize": "12px"}),

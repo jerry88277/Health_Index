@@ -455,6 +455,9 @@ def score_timeline(
             wy_mean = float(np.mean(yhat))
             pt["yhat_mean"] = round(wy_mean, 4)
             pt["yhat_band"] = round(float(np.mean(yh._band_half(Xw))), 4)
+            # A13：GPR 外推（X 離建模域＝confidence 低）時 Ŷ→prior mean 使 Ŷ-drift z **縮小** → 隱性品質漏報。
+            # 以 confidence（域相似度）判外推 → 該窗 Ŷ-drift z **不可信為健康**（不以 z 縮小當健康憑據，紅隊 A13）。
+            pt["yhat_drift_reliable"] = bool(pt["confidence"] >= cfg.y_extrap_confidence_min)
             yw = yvals[s.start : s.end] if yvals is not None else np.array([])
             obs = np.isfinite(yw)
             pt["y_actual_mean"] = round(float(yw[obs].mean()), 4) if bool(obs.any()) else None
@@ -484,6 +487,9 @@ def score_timeline(
         "n_alarms": int(sum(p["persisted_alarm"] for p in points)),
         "has_y_mapping": yh is not None,  # 前端據此決定是否畫 Ŷ vs Y 子圖
         "n_quality_alarms": int(sum(p.get("y_quality_persisted", False) for p in points)),  # 增量8 品質飄移持續告警窗
+        # A13：Ŷ 外推（帶膨脹）且窗內無足夠實際 Y 可驗證的窗數——該段 Ŷ-drift 判讀不可信（z 縮小非真健康、隱性品質可能漏報）
+        "n_quality_unreliable": int(sum(1 for p in points if p.get("yhat_drift_reliable") is False
+                                        and p.get("y_map_health") is None)) if yh is not None else 0,
         "golden_yhat_mean": round(gy_mu, 4) if gy_mu is not None else None,
         "golden_yhat_std": round(gy_sd, 4) if gy_sd is not None else None,
         "subsampled": subsampled,         # 高維/長資料集降採樣（step>window，窗間有未評分空隙）

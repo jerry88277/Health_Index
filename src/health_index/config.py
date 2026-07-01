@@ -72,6 +72,7 @@ class Config:
     y_flag_threshold: float = 0.5  # 任一 Y 健康分量 < 此 → y_flagged（安全網，類比 X 側 hard-gate；
                                    # 抓分量塌陷如換產品 dist→0，即使融合均值被另一分量稀釋未過閾）
     y_trend_z_max: float = 3.0   # 增量8：預測品質 Ŷ 窗均值相對 golden Ŷ 的水準漂移（golden-σ 單位）超此→品質飄移旗標（3σ SPC）
+    y_extrap_confidence_min: float = 0.6  # 紅隊 A13：窗 confidence（域相似度）< 此 → X 離建模域＝GPR 外推（Ŷ→prior mean、z 縮小不可信為健康）→ 標 yhat_drift_reliable=False
 
     # --- L4 漂移 ---
     drift_window: int = 60          # 漂移偵測窗大小（與檢定力下限相關，AC-2）

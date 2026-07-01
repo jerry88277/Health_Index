@@ -104,7 +104,9 @@ def acceptance_report(
         drift: 選配已知事故段（有則評 recall 與 SPC 盲）。
         spc_blind_max: 事故段相對 golden 的單變數越界增量上限（低於＝SPC 盲，隱性）。
         compute_fwer: 是否含 AC-6 FWER（is_alarm∨fwer_alarm，與線上 runner 同口徑）。
-        persistence_k: 驗收用單窗即計（=1）以量原始窗 FPR，不被 persistence 遮蔽。
+        persistence_k: 驗收用單窗即計（=1）以量**原始窗 FPR**，不被 persistence 遮蔽。**口徑分工（紅隊 A11，
+            刻意非 bug）**：驗收用 k=1（量最保守的原始窗誤報率），線上 runner 用 persistence_k≥2（濾單窗毛刺、
+            降實際誤報）→ 兩者數字不同是**設計分工**（驗收更嚴），非脫鉤；線上實際 FPR ≤ 驗收報告的原始窗 FPR。
         golden_selected_by_user: golden 段是否由使用者圈選（非資料集固定真值）。True→附選擇偏誤揭露
             （A10）：FPR 在使用者選段上評，反覆改段直到過 gate＝跨次 p-hacking → 此 FPR 為「選最佳」估計、
             非獨立 out-of-sample 保證。採 Option-A 誠實揭露（不硬擋）。
