@@ -30,9 +30,19 @@ from .runner import WindowScore, run_replay
 from .sources import FrameSource
 
 
+# demo 精靈只呈現 **CSTR 相關**資料集（TEP 含 CSTR 反應器 + 品質 Y），減少非專業使用者的稽核干擾（依使用者指示）。
+# synthetic / ccpp / steel / uci 等仍註冊於 registry.available() 供測試/驗證使用，只是不列入 demo UI。
+_DEMO_DATASETS = ("tep_tp", "tep")
+
+
 def available_datasets() -> list[str]:
-    """可選的公開資料集（registry 已註冊者）。"""
-    return registry.available()
+    """demo 精靈可選的資料集：**只列 CSTR 相關**（TEP 變體）以減少非專業使用者干擾。
+
+    其餘資料集（synthetic/ccpp/steel/uci…）仍在 ``registry.available()`` 供測試與離線驗證，
+    不列入本清單。以交集回傳（未註冊者自動略過，graceful）。
+    """
+    avail = set(registry.available())
+    return [d for d in _DEMO_DATASETS if d in avail]
 
 
 def _segments(gt) -> list[dict]:

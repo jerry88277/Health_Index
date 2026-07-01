@@ -115,7 +115,7 @@ def _home_view():
             html.Div("新建製程（先佔名，可稍後熱插拔監控模型）", style={"fontWeight": 500, "marginBottom": "8px"}),
             html.Div(style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "alignItems": "center"}, children=[
                 dcc.Input(id="np-name", type="text", placeholder="製程名稱（如 1號常壓蒸餾塔）", style={"width": "240px"}),
-                dcc.Dropdown(id="np-dataset", clearable=False, value="synthetic",
+                dcc.Dropdown(id="np-dataset", clearable=False, value="tep_tp",
                              options=[{"label": catalog.describe(d)["title"], "value": d} for d in demo.available_datasets()],
                              style={"width": "260px"}),
                 dcc.Input(id="np-area", type="text", placeholder="區域（選填，如 常壓蒸餾）", style={"width": "180px"}),
@@ -229,7 +229,7 @@ def _wizard_view():
                 html.Div(id="wiz-bind-info", style={"fontSize": "13px", "marginBottom": "8px", "color": _ACCENT}),
                 dcc.Input(id="wiz-name", type="text", placeholder="製程名稱（選填，預設用資料源標題）",
                           style={"width": "320px", "marginBottom": "8px", "display": "block"}),
-                dcc.Dropdown(id="dataset", clearable=False, value="synthetic", style={"width": "380px"},
+                dcc.Dropdown(id="dataset", clearable=False, value="tep_tp", style={"width": "380px"},
                              options=[{"label": catalog.describe(d)["title"], "value": d} for d in demo.available_datasets()]),
                 html.Div(id="overview", style={"marginTop": "10px", "fontSize": "14px", "color": "#51607a"}),
                 html.Div("監控的製程參數（預設全選；可只勾要監控的，例如 10 取 7；至少 2 個）：",
@@ -380,7 +380,7 @@ def _segview_view():
             html.Div("① 段定義", style={"fontWeight": 500, "marginBottom": "8px"}),
             html.Div(style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "alignItems": "center"}, children=[
                 html.Div([html.Label("資料源：", style={"fontSize": "13px", "marginRight": "6px"}),
-                          dcc.Dropdown(id="seg-dataset", clearable=False, value="synthetic", style={"width": "240px",
+                          dcc.Dropdown(id="seg-dataset", clearable=False, value="tep_tp", style={"width": "240px",
                                        "display": "inline-block", "verticalAlign": "middle"},
                                        options=[{"label": catalog.describe(d)["title"], "value": d}
                                                 for d in demo.available_datasets()])]),

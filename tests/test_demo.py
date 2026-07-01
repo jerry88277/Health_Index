@@ -11,8 +11,14 @@ import pytest
 from health_index.deploy import demo
 
 
-def test_available_datasets_lists_public_sets():
-    assert "synthetic" in demo.available_datasets()
+def test_available_datasets_curated_to_cstr():
+    """demo 精靈只列 CSTR 相關（TEP 變體）以減少非專業使用者干擾；synthetic 等仍在 registry 供測試/驗證。"""
+    from health_index.adapters import registry
+
+    ds = demo.available_datasets()
+    assert "tep_tp" in ds and "tep" in ds        # CSTR 相關保留
+    assert "synthetic" not in ds                  # 非 CSTR/合成 → 從 demo UI 移除
+    assert "synthetic" in registry.available()    # 但仍註冊（測試/驗證用），未真的刪除
 
 
 def test_dataset_overview_shape_and_golden():
