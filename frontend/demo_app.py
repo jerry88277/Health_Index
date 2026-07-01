@@ -71,7 +71,7 @@ app.layout = html.Div(
         dcc.Store(id="wiz-proc"),                   # 精靈綁定：{process_id?, dataset?, display_name?, mode:new|swap}
         dcc.Store(id="hist-proc"),                  # 歷史頁要顯示哪個製程
         dcc.Store(id="preview-store"),              # golden 選擇預覽資料（dataset_preview）
-        dcc.Store(id="golden-spec"),                # 目前 golden 規格（連續/勾選/自動）供建模
+        dcc.Store(id="golden-spec", data="auto"),   # 目前 golden 規格（預設 auto＝推薦；連續/勾選/自動）供建模
         dcc.Store(id="auto-runs"),                  # 自動挑選的 golden 區間（疊圖用）
         dcc.Store(id="tl-store"),  # 時間線 points（供門檻 slider 重繪，不重新評分）
         dcc.Interval(id="tick", interval=60000, n_intervals=0),  # 自動刷新（60s）——盤面不需手動戳
@@ -83,9 +83,9 @@ app.layout = html.Div(
                                html.Span("製程健康監控", style={"color": "#51607a", "fontSize": "14px"})],
                               style={"fontWeight": 500, "fontSize": "17px"}),
                      html.Div([
-                         dcc.RadioItems(id="role-sel", value="engineer", inline=True,
-                                        options=[{"label": " 作業員", "value": "operator"},
-                                                 {"label": " 工程師", "value": "engineer"}],
+                         dcc.RadioItems(id="role-sel", value="operator", inline=True,
+                                        options=[{"label": " 一般（白話）", "value": "operator"},
+                                                 {"label": " 工程師（含統計指標）", "value": "engineer"}],
                                         style={"display": "inline-block", "marginRight": "12px", "fontSize": "13px"}),
                          _btn("段分析", "nav-segview", style={"marginRight": "8px"}),
                          _btn("事件", "nav-events", style={"marginRight": "8px"}), _btn("總覽", "nav-home")]),
@@ -239,11 +239,14 @@ def _wizard_view():
                 html.Div(id="feature-readout", style={"fontSize": "12px", "color": "#51607a", "marginTop": "4px"}),
             ]),
             html.Div(id="wp2", style={"display": "none"}, children=[
-                html.Div("② 選擇訓練資料（黃金基準，代表 A 正常運轉）", style={"fontWeight": 500, "marginBottom": "8px"}),
-                dcc.RadioItems(id="golden-mode", value="range", inline=True,
-                               options=[{"label": " 連續區間", "value": "range"},
-                                        {"label": " 勾選 campaign", "value": "segments"},
-                                        {"label": " 自動挑乾淨段", "value": "auto"}],
+                html.Div("② 挑一段「正常」的資料當健康樣板", style={"fontWeight": 500, "marginBottom": "4px"}),
+                html.Div("系統要先看過一段「設備一切正常」的歷史資料，才能學會「正常長怎樣」，之後才抓得出異常。"
+                         "不確定就用「自動」（推薦）——系統會自動挑最乾淨的一段。",
+                         style={"fontSize": "12.5px", "color": "#51607a", "marginBottom": "8px"}),
+                dcc.RadioItems(id="golden-mode", value="auto", inline=True,
+                               options=[{"label": " ✓ 自動挑最乾淨段（推薦）", "value": "auto"},
+                                        {"label": " 進階：自選連續區間", "value": "range"},
+                                        {"label": " 進階：勾選生產批次", "value": "segments"}],
                                style={"marginBottom": "8px", "fontSize": "13px"}),
                 html.Div(id="gm-range", children=[
                     dcc.RangeSlider(id="golden-range", min=0, max=1500, value=[0, 600], allowCross=False,
@@ -255,10 +258,10 @@ def _wizard_view():
                     dcc.Checklist(id="golden-segs", options=[], value=[],
                                   style={"fontSize": "13px"}, labelStyle={"display": "block", "margin": "2px 0"}),
                 ]),
-                html.Div(id="gm-auto", style={"display": "none"}, children=[
-                    html.Div("系統用變點切段，自動挑最早的乾淨平穩段當基準（適合不確定該選哪段時）。",
-                             style={"fontSize": "13px", "color": "#51607a"}),
-                    _btn("套用自動挑選", "btn-auto-golden", style={"marginTop": "6px", "padding": "6px 14px"}),
+                html.Div(id="gm-auto", children=[
+                    html.Div("✓ 系統已自動挑好最乾淨平穩的一段當健康樣板——大多數情況直接「下一關」即可。",
+                             style={"fontSize": "13px", "color": _OK}),
+                    _btn("重新自動挑選", "btn-auto-golden", style={"marginTop": "6px", "padding": "6px 14px"}),
                 ]),
                 html.Div(id="golden-readout", style={"fontSize": "13px", "color": _OK, "marginTop": "8px"}),
                 html.Div("下圖：標準化偏離度（越高＝越偏離全域平均，用來看資料長相）；色帶＝campaign；綠框＝已選 golden。",
@@ -608,8 +611,14 @@ def _golden_preview(mode, rng, segs, auto_runs, pv):
         readout = f"已勾選 {len(runs)} 段 campaign，共 {n_sel} 筆作為 golden" if runs else "⚠ 尚未勾選 campaign"
     elif mode == "auto":
         runs = (auto_runs or {}).get("runs", [])
-        spec, n_sel = "auto", (auto_runs or {}).get("n_selected", 0)
-        readout = f"自動挑選：{len(runs)} 段、共 {n_sel} 筆" if runs else "點「套用自動挑選」執行"
+        if not runs:  # 預設 auto：資料一載入就自動挑段並顯示綠框，不必等使用者按按鈕
+            try:
+                runs = demo.resolve_golden_runs(pv["name"], "auto")["runs"]
+            except Exception:
+                runs = []
+        spec, n_sel = "auto", sum(e - s for s, e in runs)
+        readout = (f"✓ 已自動挑好最乾淨的訓練段：{len(runs)} 段、共 {n_sel} 筆（可直接下一關）"
+                   if runs else "系統會自動挑最乾淨的訓練段")
     else:  # range
         s, e = (rng or [0, 0])
         runs, spec = [[s, e]], {"range": [s, e]}
@@ -629,6 +638,26 @@ def _auto_golden(_n, name):
 
 
 # ---------- 建模 ----------
+def _build_scorecard(acc):
+    """白話成效卡：回答「這個模型好不好」（稽核指出缺的『有效』定義）。回 list[html]。"""
+    if not acc.get("available"):
+        return [html.Div(f"（驗收未跑：{acc.get('error', '資料不足')}）", style={"fontSize": "13px", "color": "#888"})]
+    fpr, recall = acc.get("holdout_golden_fpr"), acc.get("drift_recall")
+
+    def _row(ok, good, bad):
+        return html.Div(("✓ " if ok else "✗ ") + (good if ok else bad),
+                        style={"color": _OK if ok else _BAD, "fontSize": "13px", "margin": "2px 0"})
+
+    rows = [_row(bool(acc.get("fpr_ok")),
+                 f"正常時不亂報警（誤報 {fpr}，標準 ≤ 5%）",
+                 f"正常時會誤報（誤報 {fpr} 超過 5% 標準）")]
+    if recall is not None:
+        rows.append(_row(acc.get("recall_ok") is not False,
+                         f"抓得到已知的異常（抓到 {recall:.0%}）",
+                         f"抓不到已知的異常（只抓到 {recall:.0%}）＝形同無效監控"))
+    return rows
+
+
 @app.callback(Output("bundle-store", "data"), Output("build-result", "children"),
               Output("registry-refresh", "data", allow_duplicate=True),
               Input("btn-build", "n_clicks"), State("wiz-proc", "data"), State("wiz-name", "value"),
@@ -660,46 +689,46 @@ def _build(_n, wp, wiz_name, name, gspec, grange, window, feats, feat_opts):
     recall_txt = (f"、事故 recall {acc['drift_recall']}" if acc.get("drift_recall") is not None else "")
     y_txt = (f"、Y 側品質誤報率 {acc['y_holdout_fpr']}" if acc.get("y_holdout_fpr") is not None else "")
     if not r["saved"]:  # X 或 Y 側誤報率過高 → 物理擋存檔（誤報治理；recall 低改走警告不擋）
-        blk = "Y 側品質誤報率過高" if r.get("block_reason") == "y_fpr" else "誤報率過高"
         return no_update, html.Div([
-            html.Div(f"⛔ {blk}，未存檔：" + acc.get("verdict", ""), style={"color": _BAD, "fontWeight": 500}),
-            html.Div(f"hold-out golden 誤報率 {acc.get('holdout_golden_fpr')}{y_txt}{recall_txt}",
-                     style={"fontSize": "13px", "color": "#51607a"}),
-            html.Div("請改選更平穩的黃金期、或檢查資料源/軟測量後重建（會誤報的模型不予上線）。",
-                     style={"fontSize": "13px", "color": "#51607a"}),
+            html.Div("⛔ 這段基準資料波動太大，模型連「正常」也會誤判成異常，無法上線。",
+                     style={"color": _BAD, "fontWeight": 500}),
+            html.Div("最快解法：回上一關②把訓練段改回「✓ 自動挑最乾淨段（推薦）」再按建立——系統會自動選出平穩的一段。",
+                     style={"fontSize": "13px", "color": "#51607a", "marginTop": "4px"}),
+            html.Details([
+                html.Summary("技術細節", style={"fontSize": "12px", "color": "#888", "cursor": "pointer"}),
+                html.Div(f"{acc.get('verdict', '')}（hold-out golden 誤報率 {acc.get('holdout_golden_fpr')}"
+                         f"{y_txt}{recall_txt}，須 ≤ 5% 才能上線）",
+                         style={"fontSize": "12px", "color": "#888", "marginTop": "4px"})]),
         ]), no_update
     m, mod = r["build"], r["model"]
     disp_name = AssetStore(_REGISTRY).get_process(pid)["display_name"]
     bundle = {"bundle_path": os.path.join(_MODELS_DIR, mod["path"]), "dataset": dataset,
               "process_id": pid, "display_name": disp_name}
-    if acc.get("available"):
-        acc_line = html.Div([
-            html.Div("✅ 驗收通過：" + acc["verdict"], style={"color": _OK, "fontWeight": 500}),
-            html.Div(f"hold-out golden 誤報率 {acc['holdout_golden_fpr']}"
-                     f"（{'≤ 目標' if acc['fpr_ok'] else '過高'}）{y_txt}{recall_txt}",
-                     style={"fontSize": "13px", "color": "#51607a"}),
-            html.Div("（FPR 為前半 golden 模型的 out-of-sample 保守估計；部署用全 golden、資料更多通常更穩）",
-                     style={"fontSize": "12px", "color": "#888"}),
-        ])
+    recall_bad = acc.get("available") and acc.get("recall_ok") is False
+    if recall_bad:  # FPR 過但抓不到飄移＝形同無效監控——不再顯綠假成功（稽核 blocker）
+        head = html.Div(f"⚠ 模型已存檔，但偵測力未過關：{disp_name}（v{mod['version']}）",
+                        style={"color": "#b26a00", "fontWeight": 500})
+        advice = html.Div("這個模型「不會誤報」但也「抓不到問題」，形同無效監控。"
+                          "建議回第①關改回全參數監控（不要取消勾選）後重建。",
+                          style={"background": "#fff7ed", "border": "1px solid #fdba74", "color": "#b26a00",
+                                 "padding": "8px 12px", "borderRadius": "8px", "fontSize": "13px", "margin": "6px 0"})
     else:
-        acc_line = html.Div(f"（驗收未跑：{acc.get('error', '資料不足')}）", style={"fontSize": "13px", "color": "#888"})
-    # recall 低警告（多半因監控子集丟掉帶訊號的參數）——FPR 合格仍上線，但顯著標示偵測力下降（知情取捨）
-    recall_warn = html.Span()
-    if acc.get("available") and acc.get("recall_ok") is False:
-        recall_warn = html.Div(
-            f"⚠ 事故 recall 偏低（{acc.get('drift_recall')}）：此監控組合對已知 drift 偵測力下降，"
-            "多因排除了帶飄移訊號的參數。FPR 合格故允許上線，建議補回關鍵參數或全參數監控。",
-            style={"background": "#fff7ed", "border": "1px solid #fdba74", "color": "#b26a00",
-                   "padding": "8px 12px", "borderRadius": "8px", "fontSize": "13px", "margin": "6px 0"})
-    msg = html.Div([
-        html.Div(f"✅ 模型已建立並存檔：{disp_name}（v{mod['version']}）", style={"color": _OK, "fontWeight": 500}),
+        head = html.Div(f"✅ 模型建立完成，可以用：{disp_name}（v{mod['version']}）",
+                        style={"color": _OK, "fontWeight": 500})
+        advice = html.Span()
+    tech = html.Details([
+        html.Summary("建模摘要 / 技術細節", style={"fontSize": "12px", "color": "#888", "cursor": "pointer"}),
         html.Div(f"golden {m['golden_range']}，{m['n_golden']} 樣本，監控 {len(m.get('x_columns', []))} 參數"
-                 f"（{'、'.join(m.get('x_columns', [])[:6])}{'…' if len(m.get('x_columns', [])) > 6 else ''}）"
-                 f"，指紋健康度 {m['fingerprint_hi']:.3f}"
-                 + ("，含軟測量 Ŷ" if m.get("has_y_health") else ""), style={"fontSize": "13px", "color": "#51607a"}),
-        acc_line,
-        recall_warn,
-        html.Div("按「下一關」查看健康指標。", style={"fontSize": "13px", "color": "#51607a", "marginTop": "4px"}),
+                 f"，指紋健康度 {m['fingerprint_hi']:.3f}" + ("，含軟測量 Ŷ" if m.get("has_y_health") else "")
+                 + (f"｜{acc.get('verdict', '')}" if acc.get("available") else ""),
+                 style={"fontSize": "12px", "color": "#888", "marginTop": "4px"})])
+    msg = html.Div([
+        head,
+        html.Div("這個模型好不好：", style={"fontSize": "13px", "fontWeight": 500, "marginTop": "6px"}),
+        *_build_scorecard(acc),
+        advice,
+        tech,
+        html.Div("按「下一關」查看健康指標。", style={"fontSize": "13px", "color": "#51607a", "marginTop": "6px"}),
     ])
     return bundle, msg, _dt.datetime.now().timestamp()
 
