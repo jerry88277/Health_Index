@@ -13,13 +13,20 @@
   *{box-sizing:border-box;}
   body{margin:0;font-family:"Segoe UI","Microsoft JhengHei",system-ui,sans-serif;
        background:radial-gradient(1200px 700px at 20% 0%,#152036,#0f172a);color:var(--ink);}
-  header{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;
-         justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
+  header{padding:15px 22px 10px;border-bottom:1px solid var(--line);}
+  header .top{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
   header h1{margin:0;font-size:18px;font-weight:600;}
-  header .hint{color:var(--sub);font-size:12.5px;}
-  .wrap{display:flex;min-height:calc(100vh - 58px);}
-  .map{flex:1;overflow:auto;padding:28px 24px;}
-  /* Xmind 橫向樹 */
+  header .hint{color:#cdd8ea;font-size:13px;margin-top:5px;max-width:820px;}
+  header .hint .jargon{color:var(--sub);font-size:11.5px;}
+  /* 流程條（給兩種讀者「大致如何運作」的方向感）*/
+  .flow{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:10px;font-size:11.5px;color:var(--sub);}
+  .flow b{background:#1b2740;color:#cbd5e1;border:1px solid var(--line);border-radius:6px;padding:2px 7px;font-weight:500;}
+  .flow .arw{color:#475569;}
+  .legend{display:flex;gap:11px;flex-wrap:wrap;font-size:11.5px;color:var(--sub);}
+  .legend span{display:inline-flex;align-items:center;gap:5px;}
+  .legend i{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .wrap{display:flex;min-height:calc(100vh - 118px);}
+  .map{flex:1;overflow:auto;padding:24px 24px;}
   ul.tree{list-style:none;margin:0;padding-left:26px;position:relative;}
   ul.tree.root{padding-left:0;}
   ul.tree li{position:relative;margin:5px 0;padding-left:22px;}
@@ -36,104 +43,159 @@
   .node .tog{color:var(--sub);font-size:11px;width:10px;text-align:center;}
   .node.root{font-size:16px;font-weight:600;padding:11px 18px;
              background:linear-gradient(135deg,#1e293b,#0b1220);border-color:#3b4a63;}
+  .node.exec{border-color:#4f46e5;box-shadow:0 0 0 1px rgba(99,102,241,.25) inset;}
   .node.leaf{border-style:dashed;}
   .node .info{color:var(--sub);font-size:10px;border:1px solid var(--line);border-radius:6px;padding:0 5px;}
   li.collapsed>ul{display:none;}
-  /* 詳細面板 */
-  .detail{width:360px;flex:none;border-left:1px solid var(--line);background:#0c1424;
-          padding:18px 20px;overflow:auto;position:sticky;top:0;height:calc(100vh - 58px);}
+  .detail{width:380px;flex:none;border-left:1px solid var(--line);background:#0c1424;
+          padding:18px 20px;overflow:auto;position:sticky;top:0;height:calc(100vh - 118px);}
   .detail h2{margin:0 0 4px;font-size:15px;}
   .detail .tag{display:inline-block;font-size:11px;color:#0b1220;padding:2px 9px;border-radius:999px;font-weight:600;margin-bottom:10px;}
-  .detail .body{font-size:13px;line-height:1.65;color:#cdd8ea;}
+  .detail .body{font-size:13px;line-height:1.68;color:#cdd8ea;}
   .detail .body code{background:#1b2740;padding:1px 5px;border-radius:5px;color:#a5d6ff;font-size:12px;}
-  .detail .body ul{padding-left:18px;margin:6px 0;}
+  .detail .body b{color:#eaf2ff;}
+  .detail .body .path{color:#7dd3fc;font-size:11.5px;}
   .detail .empty{color:var(--sub);font-size:13px;}
-  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--sub);margin-top:4px;}
-  .legend span{display:inline-flex;align-items:center;gap:5px;}
-  .legend i{width:9px;height:9px;border-radius:50%;display:inline-block;}
-  @media(max-width:820px){.detail{display:none;}}
+  @media(max-width:860px){.detail{display:none;}}
 </style>
 </head>
 <body>
 <header>
-  <div>
-    <h1>🧭 Health_Index 系統架構心智圖</h1>
-    <div class="hint">AVM 精神的泛化工連續製程隱性飄移偵測 · 點節點展開/收合 · 點虛線葉節點看詳細</div>
+  <div class="top">
+    <div>
+      <h1>🧭 Health_Index 系統架構心智圖</h1>
+      <div class="hint">產線的隱形健康檢查：抓出「每個儀表看起來都正常、品質卻已悄悄跑偏」的異常，提早示警、減少壞料與停線。
+        <span class="jargon">（技術定位：AVM 精神的泛化工連續製程隱性飄移偵測）</span></div>
+    </div>
+    <div class="legend" id="legend"></div>
   </div>
-  <div class="legend" id="legend"></div>
+  <div class="flow">
+    <b>感測器數據</b><span class="arw">→</span><b>①擋壞資料</b><span class="arw">→</span><b>②比對關係</b>
+    <span class="arw">→</span><b>③反推品質</b><span class="arw">→</span><b>④看分佈</b><span class="arw">→</span>
+    <b>健康分數 0–1</b><span class="arw">→</span><b>亮燈/開事件/估效益</b>
+  </div>
 </header>
 <div class="wrap">
   <div class="map"><ul class="tree root" id="root"></ul></div>
-  <div class="detail" id="detail"><div class="empty">← 點左側任一節點看說明；虛線框（葉節點）有詳細資訊。</div></div>
+  <div class="detail" id="detail"><div class="empty">← 長官看前兩幹「一分鐘看懂 / 效益與成效」即可；交接工程師展開各模組葉節點看檔案路徑與細節。</div></div>
 </div>
 
 <script>
-const C={ctx:"var(--c1)",data:"var(--c5)",pre:"var(--c3)",det:"var(--c4)",
-         fuse:"var(--c2)",feat:"var(--c6)",dep:"var(--c8)",ui:"var(--c7)"};
+const C={ctx:"var(--c3)",data:"var(--c5)",pre:"var(--c3)",det:"var(--c4)",
+         fuse:"var(--c2)",feat:"var(--c6)",dep:"var(--c8)",ui:"var(--c7)",biz:"var(--c2)",exec:"var(--c1)",val:"var(--c5)"};
 
-// 資料樹：name≤10字；leaf 的 detail 為詳細 HTML
+// 去術語規則：白話句先行（粗體）＋術語保留（括號/可 grep）——同時滿足長官與交接。
 const TREE={name:"健康度偵測系統",root:true,color:"var(--c1)",children:[
+
+ {name:"一分鐘看懂",color:C.exec,exec:true,children:[
+   {name:"解什麼問題",color:C.exec,leaf:true,detail:`產線換過別的產品、或停機維修後回頭再生產同一支料時，表面上<b>每個儀表讀數都在正常範圍</b>，實際上品質關係已經悄悄跑偏——傳統單一儀表的管制圖看不出來。這套系統像<b>產線的健康檢查</b>，提早抓出這種看不見的異常（術語：隱性飄移 / hidden drift）。`},
+   {name:"為何重要($$)",color:C.exec,leaf:true,detail:`看不見的飄移＝<b>次級品、報廢、客訴，甚至非計畫停車</b>。每早一步發現，就少一批壞料、少一次停線。系統會把「因為提早預警而避免的停車」換算成<b>預估省下的金額</b>（誠實標：情境估算，上線後用真實數據校正）。`},
+   {name:"整體流程",color:C.exec,leaf:true,detail:`一條「資料→決策」的流水線（白話）：<br>製程感測器數據 → <b>①先擋掉壞掉/斷訊的數據</b> → <b>②比對多變量「該有的搭配關係」有沒有斷</b> → <b>③用數據反推品質、看準不準</b> → <b>④看整段生產的分佈有沒有整體位移</b> → 綜合成一個 <b>0–1 健康分數</b>，太低就<b>亮燈、開事件、估算省下的損失</b>。全程電腦自動算，不靠人工抽驗。`},
+   {name:"名詞小辭典",color:C.exec,leaf:true,detail:`給非技術讀者的白話對照：<ul>
+     <li><b>隱性飄移</b>＝儀表都正常、關係卻悄悄跑偏的異常</li>
+     <li><b>golden（黃金基準）</b>＝當作標準的一段正常生產數據</li>
+     <li><b>T² / SPE</b>＝兩把量「偏離正常多少」的尺（SPE 專抓「關係斷掉」）</li>
+     <li><b>軟測量 / Ŷ</b>＝用製程數據「算出」品質，取代昂貴/破壞性抽驗</li>
+     <li><b>健康指標</b>＝0–1 綜合分數，1 最健康、太低亮燈</li>
+     <li><b>re-entry</b>＝換料/維修後「回頭再做原本那支料」的第一段（最該盯）</li></ul>`}
+ ]},
+
+ {name:"效益與成效",color:C.biz,exec:true,children:[
+   {name:"省下的錢",color:C.biz,leaf:true,detail:`估算「<b>因提早預警而避免的非計畫停車次數 × 每次損失</b>」＝預估省下金額。誠實原則：這是<b>情境估算、非實測</b>，所有假設透明列出，上線後以真實避免的停車回填校正。<span class="path">deploy/roi.py</span>`},
+   {name:"多快處理完",color:C.biz,leaf:true,detail:`每個告警從發生到關閉的處理時間都留痕（<b>MTTR</b>），可看團隊回應速度與完整稽核軌跡（誰認領、如何處置、關閉原因）。<span class="path">deploy/events.py</span>`},
+   {name:"不誇大原則",color:C.biz,leaf:true,detail:`只有「<b>真的有人處置並關閉</b>」的事件才算進效益（close_reason=real），避免用一堆未確認的自動告警把 ROI 灌水（紅隊 A17）。這讓數字經得起採購與稽核檢視。`}
+ ]},
+
  {name:"專案初衷",color:C.ctx,children:[
-   {name:"要解的問題",color:C.ctx,leaf:true,detail:`同一產線跑 A→換 B/C 或停機維修→回頭跑 A 時，A 有沒有<b>隱性飄移</b>。<br>「隱性」＝每個感測器都在規格內、但<b>多變量關係或 X→Y 映射已偏</b>，單變數 SPC 抓不到。`},
-   {name:"AVM 精神",color:C.ctx,leaf:true,detail:`取成大鄭芳田教授 AVM（自動虛擬量測）精神：以<b>虛擬量測 Ŷ</b>取代破壞性/昂貴抽樣，並在預測不可信時<b>提前預警</b>。`},
-   {name:"成功判準",color:C.ctx,leaf:true,detail:`<ul><li>golden-A 期間維持低分（健康）</li><li>對「每變數在規格內」的隱性多變量飄移，<b>早於單變數 SPC</b> 升高</li><li>能區分「乾淨換線後 A 正常回歸」vs「A 回歸但殘留飄移」</li></ul>`}
+   {name:"要解的問題",color:C.ctx,leaf:true,detail:`同一產線跑 A → 換線做 B/C 或停機維修 → 回頭跑 A 時，<b>A 有沒有隱性飄移</b>。「隱性」＝<b>每個感測器都還在單變數規格內</b>、但多變量關係或 X→Y 映射已偏，單變數 SPC 抓不到（白話：儀表都正常、品質關係卻斷了）。`},
+   {name:"AVM 精神",color:C.ctx,leaf:true,detail:`取成大鄭芳田教授 AVM（自動虛擬量測）精神：以<b>虛擬量測 Ŷ 取代破壞性/昂貴抽樣</b>，並在預測不可信時提前預警。<br><b>白話：用製程數據「算出」可能的品質，取代昂貴或破壞性的實驗室抽驗，並在算不準時先示警。</b>`},
+   {name:"成功判準",color:C.ctx,leaf:true,detail:`(DoD) <ul><li>golden-A 期間維持低分（健康；golden＝當黃金標準的一段正常生產）</li><li>對「每變數在規格內」的隱性多變量飄移，<b>早於單變數 SPC</b> 升高</li><li>能區分「乾淨換線後 A 正常回歸」vs「A 回歸但殘留飄移」</li></ul>`}
  ]},
+
  {name:"資料契約",color:C.data,children:[
-   {name:"interface.py",color:C.data,leaf:true,detail:`<b>統一資料契約（骨架，不動）。</b><br>不變式：<b>每列＝一個 timestamp 樣本</b>。<br>RAW 必填：<code>timestamp / grade_label / y_value / y_timestamp</code>。<br>衍生：<code>campaign_id / mode / run_id / is_golden_a / y_delay</code>。<br><code>ProcessDataset(frame, x_columns, name)</code>。`},
+   {name:"interface.py",color:C.data,leaf:true,detail:`<b>統一資料契約（五維鏈骨架，保持穩定不動）。</b> 不變式：<b>每列＝一個 timestamp 樣本</b>。<br>RAW 必填 <code>timestamp / grade_label / y_value / y_timestamp</code>；衍生 <code>campaign_id / mode / run_id / is_golden_a / y_delay</code>；<code>ProcessDataset(frame, x_columns, name)</code>。<span class="path">src/health_index/interface.py</span>`},
    {name:"資料源",color:C.data,children:[
-     {name:"TEP",color:C.data,leaf:true,detail:`Tennessee Eastman：<b>含 CSTR 反應器的整廠連續製程</b>。X＝xmeas01–22（流量/溫度/壓力/液位）；<b>Y＝產品 G/H 莫耳%</b>（稀疏化驗，接 Y 側維度）。tep/tep_tp 兩變體（iid 重抽 / 保時序）。`},
-     {name:"其他公開集",color:C.data,leaf:true,detail:`CCPP（發電）、Steel（能耗）、synthetic（合成隱性飄移）、UCI gas、penicillin/IndPenSim（批次）。`},
-     {name:"泛用/現場",color:C.data,leaf:true,detail:`<code>DataFrame adapter</code>：任意表＋欄位角色映射即接入（免寫 adapter）。<code>PISource</code>：PI Historian stub（NOT VERIFIED，現場填實）。`}
+     {name:"TEP",color:C.data,leaf:true,detail:`Tennessee Eastman：<b>含 CSTR 反應器的整廠連續製程</b>（本專案連續基準）。X＝xmeas01–22（流量/溫度/壓力/液位）；<b>Y＝產品 G/H 莫耳%</b>（稀疏化驗，接 Y 側維度）。tep/tep_tp 兩變體（iid 重抽 / 保時序）。<span class="path">adapters/tep.py</span>`},
+     {name:"其他公開集",color:C.data,leaf:true,detail:`CCPP（發電）、Steel（能耗）、synthetic（合成隱性飄移）、UCI gas、penicillin/IndPenSim（批次軌跡）。<span class="path">adapters/{ccpp,steel,synthetic,uci_gas_drift,indpensim}.py</span>`},
+     {name:"泛用/現場",color:C.data,leaf:true,detail:`<code>DataFrame adapter</code>：任意表＋欄位角色映射即接入（免寫 adapter）。現場資料源 <code>PISource</code>（PI Historian）為 <b>stub＝NOT VERIFIED</b>，現場填實再實測。<span class="path">adapters/dataframe.py · deploy/sources.py</span>`}
    ]}
  ]},
+
  {name:"前處理",color:C.pre,children:[
-   {name:"分段對齊",color:C.pre,leaf:true,detail:`<code>preprocess/segment.py</code>：由 grade 導 campaign、PELT 變點、穩態 pseudo-run、transition settling 排除。<code>align.py</code>：X→Y 延遲估計。<code>seg_ramp/seg_std</code> 共用穩態準則。`},
+   {name:"分段對齊",color:C.pre,leaf:true,detail:`<b>白話：把連續資料切成「一段一段可比較的正常區」，並對齊 X 與延遲到達的品質 Y。</b> 由 grade 導 campaign、PELT 變點、穩態 pseudo-run、transition settling 排除；<code>seg_ramp/seg_std</code> 共用穩態準則。<span class="path">preprocess/segment.py · align.py</span>`},
    {name:"特徵建構層",color:C.feat,children:[
-     {name:"段定義",color:C.feat,leaf:true,detail:`<code>features.py</code>：三分段法——<b>trim</b>（去頭尾取中間，預設）、<b>ssd</b>（PELT-on-raw+ramp/std）、<b>wavelet</b>（PELT-on-高頻能量，抓振盪）。`},
-     {name:"段統計",color:C.feat,leaf:true,detail:`每段算 [參數×統計] 6 量（mean/std/min/max/range/median）；count 為段級 metadata、mode 連續退化不入。`},
-     {name:"偏離視圖",color:C.feat,leaf:true,detail:`golden window-vs-window <b>block-bootstrap</b> null → z + Holm 校正 + chance band。<b>is_advisory＝非告警</b>（可解釋視圖；主訊號仍 L2 SPE）。`}
+     {name:"段定義",color:C.feat,leaf:true,detail:`三種把連續流切成穩態段的方法：<b>trim</b>（去頭尾取中間，預設零調參）、<b>ssd</b>（PELT-on-raw + ramp/std）、<b>wavelet</b>（PELT-on-高頻能量，抓振盪/暫態）。<span class="path">preprocess/features.py</span>`},
+     {name:"段統計",color:C.feat,leaf:true,detail:`每段算 <b>[參數×統計]</b> 6 量（mean/std/min/max/range/median）；count 為段級 metadata、mode 連續退化不入網格。<b>註：偏離視圖見「介面層→段分析」（advisory 非告警）。</b>`}
    ]}
  ]},
+
  {name:"五維判斷鏈",color:C.det,children:[
-   {name:"L1 資料效度",color:C.det,leaf:true,detail:`<code>DQI_x</code>：FastMCD 穩健距離閘。感測器凍結/斷訊/超界→資料不可信就先擋，避免髒資料汙染下游。`},
-   {name:"L2 多變量",color:C.det,leaf:true,detail:`<b>隱性飄移主訊號。</b> PCA→<code>T²</code>（域內 Mahalanobis）、<code>SPE/Q</code>（<b>離流形殘差＝關係斷</b>）、GSI、<code>RBC</code> 肇因定位。<br>單點就能算（逐樣本）——每值在規格內但組合離流形→ SPE 飆。`},
-   {name:"L3 軟測量",color:C.det,leaf:true,detail:`<code>soft_sensor/y_health</code>：GPR 預測 Ŷ + split-conformal 可信度（in-sample 近似、非嚴格保證）。<b>map</b>＝X→Y 殘差健康；<b>dist</b>＝多維 Y-MSPC；<b>Ŷ-drift</b>＝預測品質水準漂移（外推時標不可信）。`},
-   {name:"L4 分布漂移",color:C.det,leaf:true,detail:`<code>drift.py</code>：PCA 分數空間；KS first-pass→MMD 確認；<b>Wasserstein</b> 量級（對 golden null 標準化）；連續資料走 <b>block-bootstrap</b>（吸自相關）。需一個分布（多筆）。`},
-   {name:"L5 批次軌跡",color:C.det,leaf:true,detail:`<code>batch_dtw</code>：DTW 軌跡對齊（penicillin/IndPenSim）+ Sakoe-Chiba band 限成本。連續穩態不適用（誠實標）。`}
+   {name:"L1 資料效度",color:C.det,leaf:true,detail:`<b>白話：先擋掉壞掉/斷訊/超界的數據，髒資料不放進下游（未過即擋）。</b> <code>DQIxGate</code> FastMCD 穩健距離閘。<span class="path">detectors/dqi_x.py</span>`},
+   {name:"L2 多變量",color:C.det,leaf:true,detail:`<b>白話：主力偵測器——即使每個儀表單看都正常，只要它們之間「該有的搭配關係」斷了就抓得到。逐樣本可算（單點就成立）。</b> PCA→<code>T²</code>(域內)、<code>SPE/Q</code>(<b>離流形殘差＝關係斷</b>)、GSI、<code>RBC</code> 肇因定位。<span class="path">detectors/mspc.py</span>`},
+   {name:"L3 軟測量",color:C.det,leaf:true,detail:`<b>白話：用製程數據反推品質 Ŷ，並判斷「這次算得準不準」。</b> <code>make_soft_sensor</code> 依規模選 <b>GPR</b>（小資料非線性）或 <b>PLS</b>（高維/共線穩健）預測 Ŷ + split-conformal 可信度（in-sample 近似、非嚴格保證）。<span class="path">detectors/soft_sensor.py</span>`},
+   {name:"L4 分布漂移",color:C.det,leaf:true,detail:`<b>白話：比對「整段生產的數據分佈」有沒有整體位移——需要累積多筆（一個窗），非單點。</b> PCA 分數空間；KS→MMD；<code>Wasserstein</code> 量級（對 golden 標準化）；連續資料走 <b>block-bootstrap</b> 吸自相關。<span class="path">detectors/drift.py</span>`},
+   {name:"L5 批次軌跡",color:C.det,leaf:true,detail:`<b>白話：批次製程專用，把兩批的生產軌跡對齊比對。</b> <code>DTW</code> + Sakoe-Chiba band 限成本（penicillin/IndPenSim）。<b>連續穩態不適用（誠實標）。</b> <span class="path">detectors/batch_dtw.py</span>`}
  ]},
+
  {name:"融合決策",color:C.fuse,children:[
-   {name:"health.py",color:C.fuse,leaf:true,detail:`各層 0–1 子分數（1=健康，方向統一）→ 加權 <b>Health Index</b>（L1/L2/L4）。<code>hard_gates</code> 硬閘安全網。<code>confidence</code>＝T² 域相似度（判讀可信度）。`},
-   {name:"單一決策點",color:C.fuse,leaf:true,detail:`<code>fwer_alarm</code>：各層對 golden null 尾機率→<b>Holm 校正</b>→FWER≤α（golden 誤報率受控）。<code>alarm()</code>＝is_alarm ∨ fwer_alarm 聯集。`},
-   {name:"re-entry 觸發",color:C.fuse,leaf:true,detail:`偵測「換產品（非 A）後第一段 A」重點監看；維修型 re-entry 待 maintenance 資料（誠實標未實作）。`}
+   {name:"health.py",color:C.fuse,leaf:true,detail:`<b>白話：把各關的分數綜合成一個 0–1 健康指標，太低就告警。</b> 各層 0–1 子分數（1=健康，方向統一）→ 加權 HI（L1/L2/L4）；<code>hard_gates</code> 硬閘安全網；<code>confidence</code>＝T² 域相似度（判讀可信度）。<span class="path">src/health_index/health.py</span>`},
+   {name:"單一決策點",color:C.fuse,leaf:true,detail:`<code>fwer_alarm</code>：各層對 golden null 尾機率→<b>Holm 校正</b>→族系錯誤率 FWER≤α（golden 誤報率受控）。權威出口 <code>alarm()</code>＝is_alarm ∨ fwer_alarm 聯集。`},
+   {name:"Y 側健康",color:C.fuse,leaf:true,detail:`<b>獨立軌，不併入 X 側 Health Index。</b> <code>YHealthIndex</code>：map（X→Y 殘差健康）⊕ dist（多維 Y-MSPC）；Ŷ 水準漂移；外推（confidence 低）時標「不可信」不當健康（A13）。<span class="path">src/health_index/y_health.py</span>`},
+   {name:"re-entry 觸發",color:C.fuse,leaf:true,detail:`偵測「換產品（非 A）後第一段 A」重點監看。維修型 re-entry（同 grade 停機）待 maintenance 資料，<b>誠實標未實作</b>。`}
  ]},
+
  {name:"部署層",color:C.dep,children:[
-   {name:"模型打包",color:C.dep,leaf:true,detail:`<code>bundle.py</code>：joblib + <b>指紋重放</b>（載入重算比對，版本漂移即拒載）。存 <code>window</code>（評分窗長單一真相，A20）、config、golden 指紋、y_health。`},
-   {name:"事件閉環",color:C.dep,leaf:true,detail:`<code>events.py</code>：偵測→認領→關閉（MTTR、處置留痕、稽核）。severity 依健康+可信+<b>層一致數</b>（A19）；process/quality 分流；close 時區穩健、append-on-closed。`},
-   {name:"驗收 gate",color:C.dep,leaf:true,detail:`<code>acceptance.py</code>：hold-out golden 上量 <b>FPR</b>（硬擋）+ <b>recall</b>（警告）+ SPC 盲 + Y 側 FPR。使用者選段附 <b>p-hacking 揭露</b>（A10）。`},
-   {name:"ROI/registry",color:C.dep,leaf:true,detail:`<code>roi.py</code>：效益估算，分母限已關閉真實處置（A17）。<code>assets/registry</code>：製程/模型 registry（版本、軟刪除、熱插拔、稽核）。<code>runner</code>：線上重放評分。`}
+   {name:"模型打包",color:C.dep,leaf:true,detail:`<code>bundle.py</code>：joblib + <b>指紋重放</b>（載入重算比對，版本漂移即拒載）。存 <code>window</code>（評分窗長單一真相，A20）、config、golden 指紋、y_health。<span class="path">deploy/bundle.py</span>`},
+   {name:"事件閉環",color:C.dep,leaf:true,detail:`偵測→認領→關閉（MTTR、留痕、稽核）。severity 依健康+可信+<b>層一致數</b>（A19）；process/quality 分流；品質事件 severity 由品質側證據定、純 Ŷ 外推上限 warning 不入 critical、不借 X 側 confidence（A14/A15）。<span class="path">deploy/events.py · alarms.py</span>`},
+   {name:"驗收 gate",color:C.dep,leaf:true,detail:`hold-out golden 上量 <b>FPR（硬擋）</b>+ recall（警告）+ SPC 盲 + Y 側 FPR。使用者選段附 p-hacking 選擇偏誤揭露（A10）。<span class="path">deploy/acceptance.py</span>`},
+   {name:"模型登錄",color:C.dep,leaf:true,detail:`<code>assets.py</code>：模型/製程 registry（版本單調、軟刪除、熱插拔、稽核 log）。<b>注意：與 adapters.registry（資料集端）不同物。</b> <span class="path">deploy/assets.py · catalog.py</span>`},
+   {name:"模型生命週期",color:C.dep,leaf:true,detail:`<code>lifecycle.py</code>：per-product 模型庫 + 時效評估 + 重建觸發。<b>誠實邊界：老化 vs 真實飄移不可自動區分，重建為高風險、預設不自動。</b> <span class="path">deploy/lifecycle.py</span>`},
+   {name:"線上資料源",color:C.dep,leaf:true,detail:`<code>DataSource</code> 協定（runner 唯一依賴的接口）：FrameSource/ReplaySource（可測）+ PISource（<b>stub NOT VERIFIED</b>，現場填實）。線上重放評分 <code>runner.py</code>。<span class="path">deploy/sources.py · runner.py</span>`}
  ]},
- {name:"前端 UI",color:C.ui,children:[
-   {name:"新建精靈",color:C.ui,leaf:true,detail:`<code>demo_app.py</code>（Dash）：選資料源+特徵子集 → golden（連續/勾選/自動）+ 預覽圖 → 測試+窗長 → 建模驗收 → 完成。`},
-   {name:"健康結果",color:C.ui,leaf:true,detail:`健康指標時間線（區域色帶）、門檻 what-if、點窗<b>下鑽</b>（GSI/T²/SPE/RBC/p-value，customdata 帶 [start,win] 不錯位）、Ŷ vs 實際 Y 子圖、匯出口徑一致。`},
-   {name:"段分析",color:C.ui,leaf:true,detail:`<b>可解釋視圖（非告警）</b>：段定義（trim/ssd/wavelet）+ [參數×統計] 偏離排序（Holm、三態、橙 banner）。與告警隔離防誤用。`},
-   {name:"事件/總覽",color:C.ui,leaf:true,detail:`事件頁（認領/關閉/MTTR/ROI/「N 層一致」）、全廠總覽三態燈（健康/告警/待建模）、製程歷史稽核。`}
+
+ {name:"驗證/DoD",color:C.val,children:[
+   {name:"跨集 DoD",color:C.val,leaf:true,detail:`<b>白話：證明系統在多個資料集上真的成立（不是只在一個 demo 湊巧）。</b> 三判準 harness：golden 低分、隱性飄移早於 SPC、能分乾淨回歸 vs 殘留飄移。<span class="path">validation/benchmark.py</span>`},
+   {name:"零調參 robust",color:C.val,leaf:true,detail:`多組態零 per-config 調參檢核（AC-1/2/3）：同一套門檻/參數跨資料集不個別調校仍成立。<span class="path">validation/crossval.py</span>`},
+   {name:"真實集不退化",color:C.val,leaf:true,detail:`UCI Gas Drift 真實漂移集（AC-4）：golden 段不誤報、真實漂移抓得到。<span class="path">validation/real_set.py</span>`}
+ ]},
+
+ {name:"介面層",color:C.ui,children:[
+   {name:"REST API",color:C.ui,leaf:true,detail:`<code>api/server.py</code>（FastAPI，MVP 無狀態每請求重算）：<code>/health /datasets /analyze /fwer /softsensor /timeline /yhealth /yhealth_index /series /contribution</code>；<b>/baseline · /crossval 未實作</b>（誠實標）。<span class="path">api/server.py · schemas.py</span>`},
+   {name:"前端",color:C.ui,leaf:true,detail:`Dash：<code>frontend/demo_app.py</code>(:8051 主 demo)、<code>frontend/app.py</code>(:8050 工程師儀表)。<b>關鍵不變式：UI 殼只呼叫邏輯核心 <code>deploy/demo.py</code>（回傳可序列化 dict、可單元測試），不在 UI 寫邏輯。</b> 精靈：選源+特徵子集→golden→測試+窗長→建模驗收→完成。`},
+   {name:"段分析",color:C.ui,leaf:true,detail:`<b>可解釋視圖（advisory＝非告警，與告警隔離防誤用）。</b> 段定義（trim/ssd/wavelet）+ [參數×統計] block-bootstrap 偏離排序（Holm 校正、三態、橙 banner）。主訊號仍是 L2 SPE，此頁不做告警決策。`},
+   {name:"事件/總覽",color:C.ui,leaf:true,detail:`事件頁（認領/關閉/MTTR/ROI/「N 層一致」）、全廠總覽三態燈（健康/告警/待建模）、製程歷史稽核（版本、驗收快照、軟刪除還原）。`}
+ ]},
+
+ {name:"上手/執行",color:C.pre,children:[
+   {name:"安裝",color:C.pre,leaf:true,detail:`<code>pip install -e .</code>（核心）／<code>pip install -e ".[api]"</code>（含 FastAPI/Dash）。相依：numpy/scipy/scikit-learn/pandas/POT/ruptures/PyWavelets。`},
+   {name:"跑 demo",color:C.pre,leaf:true,detail:`<code>$env:PYTHONPATH="src"; python frontend/demo_app.py</code> → <code>http://127.0.0.1:8051</code>（PowerShell）。`},
+   {name:"跑 API",color:C.pre,leaf:true,detail:`<code>uvicorn health_index.api.server:app --port 8000</code>。`},
+   {name:"跑測試",color:C.pre,leaf:true,detail:`<code>python -m pytest -q</code>（綠燈才 commit）。部分測試需 <code>data/tep/*.mat</code>，缺則 skip。`}
+ ]},
+
+ {name:"橫切治理",color:C.det,children:[
+   {name:"確定性數學",color:C.det,leaf:true,detail:`<b>偵測決策全為確定性數學（PCA/T²/SPE/DTW/Wasserstein），runtime 不呼叫 LLM</b>（Rule 5）。所有 RNG 經 <code>config.random_state</code> 可重現。`},
+   {name:"單一 config",color:C.det,leaf:true,detail:`<code>config.py</code>：所有超參集中於單一 frozen dataclass（單一真相）；正式跑須以 TEP 掃描值覆寫並版本化。<span class="path">src/health_index/config.py</span>`},
+   {name:"高維穩健",color:C.det,leaf:true,detail:`<code>highdim.py</code>：p≫n 時 MinCovDet 會靜默回奇異協方差（Rule 12 紅線）→ L1/L4 以 effective_rank/預降維截斷近零 noise 方向，避免靜默失敗。<span class="path">detectors/highdim.py</span>`},
+   {name:"審核獨立性",color:C.det,leaf:true,detail:`架構/schema/自審承載結論禁自審終局 → 派 ≥2 獨立子代理紅隊「重推、audit-the-audit」；衝突擇一不平均（Rule 7）；文獻以 <code>docs/literature_crossref.md</code> 為唯一真相、查不到標 NOT FOUND（Rule 12）。`},
+   {name:"範圍與現況",color:C.det,leaf:true,detail:`<b>給長官判斷投資階段/風險的成熟度。</b> 已驗證：TEP/CCPP/Steel/synthetic 上五維鏈跑通、439 測試綠。<b>目前限制</b>：維修型 re-entry 未實作、現場 PISource 為待接入 stub、真實 ROI 待上線回填、L5 DTW 僅批次。`}
  ]}
 ]};
 
-const legend=[["初衷","var(--c1)"],["資料","var(--c5)"],["前處理","var(--c3)"],["特徵層","var(--c6)"],
-  ["五維鏈","var(--c4)"],["融合","var(--c2)"],["部署","var(--c8)"],["前端","var(--c7)"]];
+const legend=[["一分鐘看懂","var(--c1)"],["效益","var(--c2)"],["初衷/前處理","var(--c3)"],["五維鏈/治理","var(--c4)"],
+  ["資料/驗證","var(--c5)"],["特徵層","var(--c6)"],["介面","var(--c7)"],["部署","var(--c8)"]];
 document.getElementById("legend").innerHTML=legend.map(([n,c])=>`<span><i style="background:${c}"></i>${n}</span>`).join("");
 
 const detail=document.getElementById("detail");
 function showDetail(n){
-  detail.innerHTML=`<span class="tag" style="background:${n.color||'#6366f1'}">${n.leaf?'詳細節點':'分支'}</span>
-    <h2>${n.name}</h2><div class="body">${n.detail||'（此為分支節點，點展開子節點；葉節點才有詳細資訊）'}</div>`;
+  detail.innerHTML=`<span class="tag" style="background:${n.color||'#6366f1'}">${n.leaf?'詳細節點':(n.exec?'給長官':'分支')}</span>
+    <h2>${n.name}</h2><div class="body">${n.detail||'（此為分支，點展開子節點；葉節點才有詳細資訊）'}</div>`;
 }
-function render(node){
+function render(node,depth){
   const li=document.createElement("li");
   const el=document.createElement("div");
   const hasKids=node.children&&node.children.length;
-  el.className="node"+(node.root?" root":"")+(node.leaf?" leaf":"");
+  el.className="node"+(node.root?" root":"")+(node.exec&&!node.leaf?" exec":"")+(node.leaf?" leaf":"");
   el.innerHTML=(hasKids?`<span class="tog">▸</span>`:"")+
     `<span class="dot" style="background:${node.color||'#6366f1'}"></span>${node.name}`+
     (node.leaf?`<span class="info">i</span>`:"");
@@ -144,13 +206,15 @@ function render(node){
   li.appendChild(el);
   if(hasKids){
     const ul=document.createElement("ul");ul.className="tree";
-    node.children.forEach(c=>ul.appendChild(render(c)));
+    node.children.forEach(c=>ul.appendChild(render(c,depth+1)));
     li.appendChild(ul);
     el.querySelector(".tog").textContent="▾";
+    // 預設收合：非根、非前兩幹（給長官的收合層）——長官只見頂層名稱；工程師自行展開
+    if(depth===1 && !node.exec){li.classList.add("collapsed");el.querySelector(".tog").textContent="▸";}
   }
   return li;
 }
-document.getElementById("root").appendChild(render(TREE));
+document.getElementById("root").appendChild(render(TREE,0));
 </script>
 </body>
 </html>
