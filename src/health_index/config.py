@@ -64,6 +64,10 @@ class Config:
     pls_components: int = 5       # PLS 軟測量潛在成分數（上限，實際 cap 至 min(p, n_obs−1)）；軟測量潛因子
     soft_sensor_pls_min_features: int = 30   # X 維 > 此 → 選 PLS（共線/高維，GPR RBF 退化、O(n³) 貴）
     soft_sensor_pls_min_samples: int = 1000  # 觀測 > 此 → 選 PLS（GPR O(n³) 不可擴展）；否則 GPR（小資料非線性友善）
+    # CV+/jackknife+：golden 單 campaign n<cp_min_calibration=200 時 split-CP 退回 GSI，改用 CV+
+    # （每點 both fit both 校準）。覆蓋為 worst-case ≥1−2α（非 split-CP 的 ≥1−α），誠實標（紅隊 A11）。
+    cv_plus_folds: int = 5        # CV+ 折數 K（n_folds≥n → jackknife+ 逐一 LOO）
+    cv_plus_min_obs: int = 20     # CV+ 上線最小觀測數（**獨立於 cp_min_calibration**；小 n 修法自有門檻）
 
     # --- Y 健康融合（桶2b）：映射健康 ⊕ 分布健康 → 單一 0–1 ---
     y_map_scale: float = 1.0     # 映射健康 exp 衰減尺度：殘差/可信帶 比超 1 的均值越大→映射越不健康
