@@ -1,8 +1,8 @@
 # 啟動手冊 — Health_Index 全棧（M10）
 
 > 目標：在**乾淨環境**一次拉起全棧（後端判斷鏈 API + 前端視覺化），並以煙霧測試確認端到端正常。
-> 本手冊所有命令與預期輸出皆於 2026-06-02 實測（commit `a8afe84` 之後）。
-> 範圍誠實（Rule 12）：資料源為**內建合成連續製程**；真實集（TEP/PRONTO/Gas）adapter 列 backlog（見 §8）。
+> 本手冊命令與預期輸出於 <重新實測日期/commit> 實測更新（原 2026-06-02 基準之測試數/端點/資料集清單已變動）。
+> 範圍誠實（Rule 12）：資料源含內建合成（synthetic/synthetic_pgn）與真實集 adapter：tep/tep_tp（`data/tep/` 12 個 MMFDD .mat 在庫、`tep.generate()` 可跑）、uci_gas_drift、ccpp(_covert)、steel(_covert)；PRONTO 仍未接。
 
 ---
 
@@ -20,7 +20,7 @@
    └─────────────────────────────────────────────┘
 ```
 
-判斷鏈（確定性數學，runtime 不呼叫 LLM）：`L1 DQI_x → L2 T²/SPE/GSI → L3 軟測量+CP → L4 漂移 → Health Index 融合 + re-entry`。
+判斷鏈（確定性數學，runtime 不呼叫 LLM）：`L1 DQI_x → L2 T²/SPE/GSI → L3 軟測量+CP → L4 漂移 →（批次離線）L5 DTW → Health Index 融合 + re-entry`。
 
 ---
 
@@ -67,7 +67,7 @@ extras 說明（`pyproject.toml`）：
 MVP 內建**合成連續製程**，無需下載：`grade A(golden) → B → A(clean re-entry) → C → A(drift re-entry)`，
 在最後一段 A 注入**隱性多變量飄移**（每變數仍在單變數規格內、僅相關結構偏移）。
 
-真實集（TEP / PRONTO / Gas Sensor Drift）adapter 列 backlog（§8）；接入時沿用同一 `interface` 契約。
+真實集 adapter 已接：`tep`/`tep_tp`、`uci_gas_drift`、`ccpp(_covert)`、`steel(_covert)`（皆沿用同一 `interface` 契約，清單以 `adapters.registry.available()` 為準）；PRONTO 未接。
 
 ---
 
@@ -91,13 +91,10 @@ curl http://127.0.0.1:8000/health
 
 ## 5. 啟動前端
 
-```powershell
-# 終端機 B（後端需先在 :8000 跑著）
-python frontend/app.py
-```
+終端機 B：`python frontend/app.py`（:8050，工程師視圖）。另補終端機 C：`python frontend/demo_app.py`（:8051，產品 UI：監控總覽 → 建模精靈 → 結果下鑽，含事件閉環與製程/模型 registry；注意現行 5 步精靈將由 9 步 batch-AVM Golden 精靈取代，見 docs/batch_avm_design.md §3）。
 瀏覽器開 **http://127.0.0.1:8050** → 選 `synthetic`、設 seed/drift_strength → 按「分析」。
 
-預期看到：per-campaign **Health Index 長條圖**（紅=告警、`*`=re-entry、虛線=告警門檻 0.6）+ **各層健康子分數圖**（L1/L2/L4）。
+預期看到 app.py 現行版面（由大到小）：前情提要 → 總健康度 → 三面向子分數 → 可疑參數排行（RBC）→ 異常程度時間軸，術語為現場白話（SPE→「異常程度」等）。
 
 ---
 
@@ -107,7 +104,7 @@ python frontend/app.py
 ```powershell
 python -m pytest -q
 ```
-**預期**：`105 passed`。
+**預期**：全綠（2026-07-03 commit 5052b8a 基準為 `451 passed`；以當下全綠為準）。
 
 **(b) API 端到端**（後端需在跑）
 ```powershell
@@ -149,10 +146,11 @@ python -c "from health_index.validation.crossval import cross_validate, format_r
 | 前端 campaign 級 HI / 子分數圖 | ✅ 已實作（M8） |
 | cross-validation 跨組態超參 robustness（合成） | ✅ 已實作（M9） |
 | 後端 `POST /timeline`（逐樣本 T²/SPE/GSI）、`POST /contribution`（RBC 肇因）+ 前端時間軸/肇因圖 | ✅ B1（指出隱性飄移在序列中何時起、哪個變數） |
-| 後端 `/baseline`、Ŷ vs Y 軟測量時間軸、`/crossval` | ⏳ M-later／B2 |
-| L5 批次 DTW（penicillin/IndPenSim） | ⏳ 延後（連續型聚焦，待批次資料） |
-| **完整 AC-4「真實集不退化」** | ⏳ backlog：需下載真實資料（UCI Gas Drift 為最低成本起點）；目前僅合成多組態泛化 |
-| **AC-6「golden-A 誤報率≤α」嚴格 FWER 控制** | ⏳ M6 未接線（`config.fwer_method` 已預留）；目前以雙軌融合+硬閘安全網，未做嚴格 FWER 校正 |
+| Ŷ vs Y 軟測量端點 | ✅ `POST /softsensor` 已建（另有 `/fwer` `/yhealth` `/yhealth_index` `/series`，見 api/server.py） |
+| `/baseline`、`/crossval` 端點 | ⏳ 仍無（crossval 走 §6(c) 離線 runner） |
+| L5 批次 DTW（IndPenSim） | ✅ 已實作（`detectors/batch_dtw.py` + `adapters/indpensim.py` + `preprocess/align.py`，離線路徑） |
+| **完整 AC-4「真實集不退化」** | 真實集 adapter 已接（uci_gas_drift/tep/ccpp/steel；`validation/real_set.py` 在庫、`data/tep/` .mat 在庫）；AC-4 通過與否以 `validation/benchmark.py` 重新核對後回填（NOT VERIFIED） |
+| **AC-6「golden-A 誤報率≤α」嚴格 FWER 控制** | `POST /fwer` 端點已建（api/server.py:140）；嚴格 FWER 治理與「跨線多重比較」仍列 2026-07-02 風險稽核開放缺口——本列狀態需重新核對後回填（NOT VERIFIED） |
 | 維修型 re-entry（同 grade A 中停機） | ⏳ 需 mode=maintenance 資料 |
 
 ---

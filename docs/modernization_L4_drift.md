@@ -1,6 +1,7 @@
 # L4 分佈漂移偵測 現代化文獻調查（2017–2026）
 
 > 調查日期：2026-06-01
+> 狀態（2026-07 更新）：主建議已部分落地——現行 L4（`src/health_index/detectors/drift.py:1-8`）＝KS first-pass 廉價篩 → block-permutation MMD（RBF, median heuristic）為最終顯著性判據＋解析 1D-Wasserstein 量級（對 golden null 標準化）＋PSI 降級僅供溝通。MMDAgg / Sinkhorn / ADWIN / BOCPD / Scan-B 未採納，留作 backlog。
 > 範圍：比 KL / KS / PSI / 經典 Wasserstein 更新的分佈漂移（distribution shift）、two-sample test、concept drift 偵測解法
 > 原則：**嚴禁捏造**。每方法附真實 DOI/URL；查不到標 `NOT FOUND`。術語保留 English。
 > 對應規範：Rule 5（偵測器確定性數學，runtime 不呼叫 LLM）、Rule 7（衝突擇一）、Rule 12（Fail loud）
@@ -9,7 +10,7 @@
 
 ## 0. 現況與痛點對位
 
-目前 L4：以 KL / KS / PSI / 經典 Wasserstein + permutation 校準，比較「golden-A 分佈 vs 新 A 分佈」。痛點：
+目前 L4：以 KL / KS / PSI / 經典 Wasserstein + permutation 校準，比較「golden-A 分佈 vs 新 A 分佈」。（更新註記）此為 2026-06 調查當時基線。現行 drift.py 已無 KL；KS 改為 first-pass 篩選（非主判據）、MMD block-permutation 為最終決策、Wasserstein 改解析 1D per-component 和（golden-null 標準化 z-score）、PSI 僅溝通不入顯著性決策。痛點①②③已依此消解或緩解。痛點：
 
 | 編號 | 痛點 | 根因 |
 |---|---|---|
@@ -156,11 +157,13 @@
 ### 3.1 對「少量點、線上、捕捉關係型隱性飄移」最值得納入的 2–3 個
 
 **首選 ①：MMD（含 MMDAgg）取代 KS 為主力多維 two-sample test。**
+（更新註記）已採納（變體）：drift.py 以 MMD（RBF, median heuristic bandwidth）＋block-permutation p-value 為最終判據（紅隊 N4 自相關校正）；但 KS 非「降級為輔助說明」而是保留為分層決策的廉價 first-pass 閘（兩者皆顯著才判漂移，drift.py:216-229）；MMDAgg 未採（未引入多 bandwidth 聚合）。
 - 少量點佳、joint 空間原生捕捉⑤、permutation 校準直接沿用現有框架、O(N²) 在 TEP/penicillin 規模可接受。
 - MMDAgg 進一步免 bandwidth 調參且小樣本非漸近校準——是「最低摩擦升級」。
 - **是否優於現有組合**：是。MMD 嚴格優於 KS（KS 是 1-D sup-norm，MMD 是多維 RKHS 全分佈差），且不像 KL/PSI 在非重疊時發散。建議 KS 降級為「per-feature 輔助說明」，不再當多維主判據。
 
 **首選 ②：Sinkhorn divergence 取代精確多維 Wasserstein。**
+（更新註記）此建議被另一實作取代：現行 L4 不做精確多維 OT，量級改用解析 1D-Wasserstein（per-component `scipy.stats.wasserstein_distance` 加總、s-vs-s 等樣本 disjoint 比較、對 golden null 標準化，drift.py:167-199），痛點③（O(N³logN)）以此消解；Sinkhorn 未採、留 backlog。
 - 解③（O(N³logN)→O(N²/ε)）且保 OT 幾何（解①的非重疊發散），sample complexity 1/√n 對少量點友善。
 - **是否優於現有組合**：是，針對「多維 Wasserstein 太貴」這一痛點。POT 直接支援。Sliced-Wasserstein 為更廉價的次選。
 - ⚠️ MMD vs Sinkhorn 取捨（Rule 7）：兩者非互斥。**MMD/energy 偏「分佈是否相異」的統計檢定（有現成 p-value 機制）**；**Sinkhorn/SW 偏「漂移幾何量值」（給可解釋的距離大小與搬運方向）**。建議 MMD 當主判據（出 p-value），Sinkhorn/SW 當輔助量化漂移幅度，不混成單一公式。
@@ -172,7 +175,7 @@
 
 ### 3.2 線上序列偵測（ADWIN / BOCPD / Scan-B）如何與「窗口 + permutation + 持續性」整合
 
-現有 L4 = 固定窗批量 two-sample + permutation p-value + 手寫持續性規則。三種整合路徑（對比表）：
+現有 L4 = 固定窗批量 two-sample + permutation p-value + 手寫持續性規則。（更新註記）現行 L4 決策層已是 KS first-pass→block-aware MMD 的分層決策（drift.py:216-229）；permutation 已為 block-permutation（自相關感知）。ADWIN / Page-Hinkley / BOCPD / Scan-B 三路徑均未採納，本節整合建議整段屬 backlog。另 CUSUM 已在別處落地（G1 純 Y CUSUM/KS 輕量模組、batch-AVM 殘差 EWMA/CUSUM 設計 §7），非接在 L4 score 流上。三種整合路徑（對比表）：
 
 | 路徑 | 做法 | 優點 | 缺點 | 適用 |
 |---|---|---|---|---|

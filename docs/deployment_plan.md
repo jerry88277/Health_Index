@@ -1,6 +1,7 @@
 # 交付與線上應用計畫：Health_Index → 產線部署
 
 > 本檔為**交付工作的版本化真相**（repo 是唯一真相，對話 context 不算）。loop 依此推進。
+> **狀態註記**：2026-07-02 產品核心重定：北極星＝多產線健康儀表板（點產線→即時記錄/告警歷史/模型資訊，告警下鑽到偏移的 X 參數或 Y）+ 三監控目標 G1/G2/G3（各以 SMTP 通知收尾，串接暫緩）+ 4h CSTR 批次生命週期。交付方向新真相＝docs/batch_avm_design.md 與新 9 步精靈；本檔 Phase 1/2 為已落地事實紀錄，仍有效。
 > 建立：2026-06-15（git 時間為權威）。範圍決策見 §2「瓶子優先」。
 
 ---
@@ -15,6 +16,7 @@
 
 使用者明確指示：**先把瓶子做出來**——用**公開資料集**做線上模擬，PI 介接**保留 stub**、之後換真酒。
 Demo 終態 = 一個 UI 走通四步：**選定資料範圍 → 建立模型 → 確認模擬資料 → 查看健康指標**。
+已演進：現行 demo 為多畫面應用（home 總覽/精靈/results/events 告警事件閉環/history/segview），建模精靈為 5 步（選資料源→訓練資料範圍→測試資料範圍→建立模型→完成，frontend/demo_app.py:215）；且現行 5 步精靈將被 9 步 batch-AVM Golden 精靈取代（batch_avm_design.md §3，現為最優先）。
 
 - **瓶子（先做）**：模型生命週期 + 線上評分 runner + 4 步 UI，以公開時序資料集（TEP/synthetic/uci）驗證。
 - **新酒（後換）**：(a) 真實 PI 資料源（D2 的 PISource 填實 + 現場實測）；(b) 演算法正確性升級（P1/P2）。
@@ -55,7 +57,7 @@ src/health_index/deploy/
   alarms.py      G2 AlarmEvent 雙視圖 + AlarmSink
   acceptance.py  G3 生產驗收報告(改造桶6 benchmark)
   lifecycle.py   G4 per-product 模型庫 + 重建基準觸發 + 哨兵
-  ui/            Demo UI(4步流程)；舊 Dash frontend 作廢
+  （更正：UI 實作位於 frontend/demo_app.py（deploy/ 下無 ui/ 目錄），多畫面 + 5 步精靈；「4步流程」描述過時。）
 ```
 
 ## 6. 執行順序（瓶子優先；每桶 worktree→TDD→≥2 紅隊(承載性)→綠燈 commit→merge→devlog）
@@ -110,4 +112,4 @@ src/health_index/deploy/
   `check_threshold_portability` 哨兵、registry/from_frame 攝入、TEP 稀疏 Y（y_every）天然模擬延遲軟量測。
 
 ## 9. 已知前置債（交付前必修，列 Phase 2）
-- P1 融合層二值化漏弱飄移（HI 軌）；P2 FWER 對自相關 golden 誤報 0.17；server 繞過 registry（兩套資料集目錄）。
+- 更新：P1/P2 已於 §6 Phase 2 完成（0.17 為 stale 數字——§6 P2 自註「原計畫 0.17→≤α 為 stale」；殘留邊界見 §6 誠實邊界）。未解殘債：server 繞過 registry。另 2026-07-02 風險稽核新開放缺口（SMTP 串接、G2/G3 X 歸因、G3 適用域、headless runner、數值護欄、跨線多重比較）見 devlog 2026-07-03。

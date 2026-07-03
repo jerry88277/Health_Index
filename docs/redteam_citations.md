@@ -1,6 +1,7 @@
 # Red-Team 文獻引用查證報告（獨立對抗審查）
 
 > 審查日期：2026-06-02 · 角色：學術文獻誠信獨立 red team（懷疑、不信任既有結論、逐筆親查）
+> 狀態註記（2026-07）：本檔為 modernization 階段查證 ledger（歷史紀錄，勿改裁決本文）。§4a 必改已落地；§4b 五筆補登書目**尚未轉錄至 literature_crossref.md**（唯一引用真相）；後續文獻待辦（Barber 2021 VERIFY、DQIy DOI 已統一 2146006）改由 batch_avm_design.md §11 追蹤。
 > 方法：以 **CrossRef API**（DOI 註冊權威）為第一優先，輔以 PMLR / JMLR / 出版商頁面 / arXiv 交叉比對。會議論文（PMLR/NeurIPS/JMLR）多無傳統 DOI，標明其權威識別碼（PMLR vol、JMLR vol、ACM 代理 DOI）。
 > 紀律：嚴禁捏造。每筆給 VERIFIED / CORRECTED / NOT FOUND + 正確 DOI/URL。
 > 對象：`modernization_map.md`、四份 `modernization_L*.md`、`literature_crossref.md`，並 audit-the-audit 審 `modernization_audit.md` 自身 F1–F3 事實主張。
@@ -62,7 +63,7 @@
 
 | 位置 | 錯誤 | 正確 | 嚴重度 |
 |---|---|---|---|
-| `modernization_L3_softsensor.md` | RI DOI 標 `10.1109/TSM.2007.914388` | `10.1109/TSM.2007.914373`（`.914388` 是 Yoon & Shen 他人論文） | 🔴 必改（已被 audit/map 點名，本輪鐵證確認） |
+| `modernization_L3_softsensor.md` | RI DOI 標 `10.1109/TSM.2007.914388` | `10.1109/TSM.2007.914373`（`.914388` 是 Yoon & Shen 他人論文） | 🔴 必改（已被 audit/map 點名，本輪鐵證確認）→ ✅ 已修：modernization_L3_softsensor.md 已改為 .914373（devlog 2026-06-02，commit 72a4173） |
 
 ### 4b. audit 殘留 NOT VERIFIED → 本輪補到正式 DOI（含一處 audit 自身的事實錯誤）
 

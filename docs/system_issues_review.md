@@ -3,6 +3,7 @@
 > 背景：本清冊彙整 2026-06-22「增量7（Y 側品質飄移預警）、增量8、增量9（監控特徵子集選擇）」三批變更上線後，由 12 個複審視角（10 個使用情境角色：凌晨夜班作業員、現場工程師、生產製程工程師、生產處長、品保/QA、維修/可靠度工程師、資安/IT、軟體可靠度、新手使用者、統計嚴謹度；外加 2 個 critic：系統性/架構債、無人查的面向）獨立提出的 204 筆問題。本清冊只合併「同一技術根因、不同角色重複提出」的條目（保留最完整描述並標註所有提出角色），**不過濾小問題或不確定問題**。依 area 分節、severity（blocker > major > minor）排序。
 >
 > 唯一真相提醒：本清冊為複審輸出，承載性結論（如『應加 SSO 才能上線』）仍需獨立查證 primary source 與紅隊對抗，未在此終局背書。
+> → 紅隊對抗複審已完成：逐筆 verdict（99 confirmed / 11 false_positive，含多筆嚴重度與因果鏈修正——如 window-未存-bundle 之後果被縮限、MTTR「荒謬巨大值」實為 close() TypeError 全面失效、lifecycle 未接 UI 降 blocker→major、灰燈「視覺塌縮」限縮為 banner 層、開案時間歸因被推翻）見 docs/redteam_verified_issues.md；與本冊衝突時以該冊為準。
 
 ---
 
@@ -919,7 +920,7 @@
 - **建議**：空狀態只給一顆主 CTA（新建監控模型），「新建製程」降為次要/進階，或加一句「不確定就按這顆」。
 - **提出角色**：新手使用者
 
-### [major] 大量未解釋術語塞滿介面（GSI/T²/SPE/RBC/conformal/RI/MSPC/campaign/re-entry），新手讀不懂
+### [major] 大量未解釋術語塞滿介面（GSI/T²/SPE/RBC/conformal/RI/MSPC/campaign/re-entry；註：RI 不在 live code——已被 CP 刻意取代，soft_sensor.py:3-6，且新精靈明定不得稱 RI），新手讀不懂
 - **影響**：預設角色就是工程師，結果頁與 window-detail 直接灑出術語，雖有 operator 視圖會藏但預設不是它且切換入口小；golden 預覽圖軸名「偏離度(σ)」、catalog「campaign」「re-entry」都未在 UI 內解釋→3 秒測失敗。
 - **evidence**：`frontend/demo_app.py:86,310-311,854-861`；`src/health_index/deploy/catalog.py`
 - **建議**：預設角色設 operator；工程師術語加 tooltip/info 圖示；首次進結果頁給一句白話導讀。
@@ -1050,7 +1051,7 @@
 | 可用性/新手引導/行動 | 21 |
 | 部署/持久化 | 1 |
 
-## 最該先修的 blocker / major Top 10
+## 最該先修的 blocker / major Top 10（2026-06 快照；#4 window 與 #8 lifecycle 已在 redteam_verified_issues.md 降級為 major 並修正後果描述——控制限/PCA basis 於 fit 時凍結、不受評分窗長影響，實害限事件時間對齊與口徑）
 
 1. **[blocker] 全系統零認證/授權（§7）** — 採購硬否決項，任何人可刪製程/關事件/竄改稽核；IT 不放行。
 2. **[blocker] 稽核 log 可竄改 + actor 可冒名（§7）** — 合規問責的根基，比沒稽核更危險（營造可信假象）。
@@ -1067,6 +1068,6 @@
 
 ## 下一步
 
-- 先封堵 blocker：auth/RBAC + 稽核不可竄改 + 模型目錄移出 temp（一組導入前置 IT gate）。
+-（2026-06 當時建議，已被取代）先封堵 blocker：auth/RBAC + 稽核不可竄改 + 模型目錄移出 temp（一組導入前置 IT gate）。→ 2026-07 定調：資安/RBAC/並發鎖標「PoC 後」（見 redteam_verified_issues.md）；現行優先序＝9 步新精靈管線 INC-1~INC-5（INC-1 已完成，5052b8a）與風險稽核開放缺口（SMTP 串接暫緩、G2/G3 X 歸因、G3 適用域、headless runner、數值護欄、TDD-3），見 docs/devlog/2026-07-03.md。
 - window 凍進 bundle 並讓所有 score/overview/currency/驗收讀同一窗長（解一處連鎖修六處不一致）。
 - 把 lifecycle 接上 UI 並統一 0.05/0.3/persistence_k 三套門檻口徑（時效治理閉環）。

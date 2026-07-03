@@ -3,6 +3,7 @@
 > 範圍：2017–2026 期間，比「PLS / GPR + AVM RI（雙模型重疊面積）」更新的軟測量預測 Ŷ 與**預測可信度量化**解法。
 > 紀律：每個方法附真實 DOI/URL；查不到標 **NOT FOUND**；偵測器須 deterministic-at-inference、runtime 不呼叫 LLM（CLAUDE.md Rule 5）。
 > 本檔僅做文獻調查與建議，不改動 `interface.py` 骨架。
+> 狀態（2026-07 更新）：本調查主建議已落地——L3 可信度層已以 split-CP 取代 RI（`src/health_index/detectors/soft_sensor.py:1-14`，live code 無 RI）；小 n 場景另建 CV+/jackknife+（`src/health_index/detectors/conformal_cv.py`，誠實 worst-case 覆蓋 ≥1−2α=0.80@α=0.1，Barber 2021 待 crossref VERIFY）。下文『現況』均指 2026-06 調查當時基線。
 
 ---
 
@@ -91,7 +92,7 @@
 
 | 項目 | 內容 |
 |---|---|
-| **改進痛點** | **②（直擊）**：給 distribution-free、**finite-sample 有效覆蓋率**的預測區間 |
+| **改進痛點** | **②（直擊）**：給 distribution-free、**finite-sample 有效覆蓋率**的預測區間（as-built 註記）理論保證成立於嚴格 held-out calibration；本專案實作為 in-sample 近似 → 覆蓋為近似、非嚴格保證，GPR 過擬合下 cp_q_ 可能窄於名目（soft_sensor.py 誠實標，紅隊 A11）；CV+/jackknife+ 誠實標 worst-case ≥1−2α。 |
 | **可信度形式** | **預測區間／集合 + 覆蓋保證**（P(y∈Ĉ) ≥ 1−α），可任意 wrap 既有模型 |
 | **與 RI 關係** | **取代 RI 的「可信度語意」層**：把 ad-hoc 重疊面積換成有保證的覆蓋率；門檻 α 由使用者顯式設定而非經驗猜 |
 | **成熟度** | 高（理論成熟，工業時序已有專門變體，見下） |
@@ -103,6 +104,7 @@
 - Romano, Patterson & Candès (2019), *Conformalized Quantile Regression (CQR)*, NeurIPS 32。arXiv: **10.48550/arXiv.1905.03222**。 https://arxiv.org/abs/1905.03222 — 自適應異方差區間（解決 RI 區間不隨輸入變化的問題）。
 - Xu & Xie (2021), *Conformal Prediction Interval for Dynamic Time-Series (EnbPI)*, ICML 2021（期刊版 IEEE T-PAMI）。arXiv: **10.48550/arXiv.2010.09107**。 https://arxiv.org/abs/2010.09107 — **放寬 exchangeability**，假設誤差 stationary strongly-mixing，適用製程時序。
 - Zaffran et al. (2022), *Adaptive Conformal Predictions for Time Series (ACI)*, ICML 2022。arXiv: **10.48550/arXiv.2202.07282**。 https://arxiv.org/abs/2202.07282 — **線上自適應、抗 distribution shift**，契合本專案 campaign 漂移場景。
+  （更新註記）後續評估結論：時序 CP（EnbPI/ACI）在本專案不宣稱覆蓋保證——re-entry 非穩態、無線上 label 破其前提（soft_sensor.py docstring，列 Phase 2）；re-entry 破 exchangeability 對 split-CP 與 CV+ 一視同仁，CP 家族皆非抗漂移方案。
 - 工業時序 + distribution shift 的 CP UQ（IEEE，2025）：*Uncertainty Quantification Based on Conformal Prediction for Industrial Time Series With Distribution Shift*, IEEE Xplore 10870871。 https://ieeexplore.ieee.org/document/10870871 （DOI **NOT VERIFIED**；直接對應本專案痛點，建議精讀）
 
 ### 2.2 Deep Ensembles
@@ -203,11 +205,11 @@
 | 維度 | AVM RI | Conformal Prediction |
 |---|---|---|
 | 可信度定義 | conjecture vs reference 兩模型輸出分佈**重疊面積**映射到[0,1] | nonconformity score 的分位數 → **預測區間/集合** |
-| 統計保證 | **無**（ad-hoc，門檻經驗設定） | **有**：distribution-free、**finite-sample marginal coverage** P(y∈Ĉ)≥1−α |
+| 統計保證 | **無**（ad-hoc，門檻經驗設定） | **有**：distribution-free、**finite-sample marginal coverage** P(y∈Ĉ)≥1−α（as-built 註記）理論保證成立於嚴格 held-out calibration；本專案實作為 in-sample 近似 → 覆蓋為近似、非嚴格保證，GPR 過擬合下 cp_q_ 可能窄於名目（soft_sensor.py 誠實標，紅隊 A11）；CV+/jackknife+ 誠實標 worst-case ≥1−2α。 |
 | 「兩模型同錯」風險 | 高（兩模型一致地錯時 RI 仍高） | 低：calibration set 用**真實殘差**校準，同錯會反映在 nonconformity 分佈 |
 | 門檻設定 | 拍腦袋 | 使用者顯式選 α（風險預算），語意清楚 |
 | 模型耦合 | 綁定雙模型架構 | **model-agnostic**：可 wrap PLS/GPR/任意 deep model |
-| 線上漂移 | RI/GSI 各管一塊 | 有 EnbPI / ACI 變體**內建對 distribution shift / 時序依賴的處理**（直擊本專案 re-entry 漂移） |
+| 線上漂移 | RI/GSI 各管一塊 | 有 EnbPI / ACI 變體**內建對 distribution shift / 時序依賴的處理**（直擊本專案 re-entry 漂移）（更新註記）後續評估結論：時序 CP（EnbPI/ACI）在本專案不宣稱覆蓋保證——re-entry 非穩態、無線上 label 破其前提（soft_sensor.py docstring，列 Phase 2）；re-entry 破 exchangeability 對 split-CP 與 CV+ 一視同仁，CP 家族皆非抗漂移方案。 |
 | 計算成本 | 低 | **同樣低**（split-CP 只需排序 calibration scores）、deterministic |
 
 **優缺點：**
@@ -216,7 +218,7 @@
 
 **製程/軟測量應用文獻**：工業時序 + distribution shift 的 CP UQ 已有 2025 IEEE 論文（§2.1 末），CP for GP surrogate 有覆蓋保證版本（§2.6）。製程領域 CP 仍偏新但成長快，文獻基礎足以支撐 MVP 落地。
 
-> **明確建議**：**以 Conformal Prediction（split-CP 起步，campaign/re-entry 場景升級為 EnbPI 或 ACI）取代 AVM RI 作為 L3 的可信度層**；保留 RI 為相容性對照基線（向後相容）。base estimator 仍可沿用現有 PLS/GPR，CP 只是外掛校準層——**這對 `interface.py` 骨架是 surgical 改動**（新增 calibration set 與 conformal wrapper，不動五維度判斷鏈結構）。
+> **明確建議**：**以 Conformal Prediction（split-CP 起步，campaign/re-entry 場景升級為 EnbPI 或 ACI）取代 AVM RI 作為 L3 的可信度層**；（更新註記）實際採納的升級軸與此不同：split-CP（cp_min_calibration=200 門檻）起步後，實際缺口是「小 n（golden 單 campaign n<200）」而非時序漂移，已以 CV+/jackknife+（conformal_cv.py，自有門檻 cv_plus_min_obs、誠實 ≥1−2α）補上；EnbPI/ACI 未採、列 Phase 2。保留 RI 為相容性對照基線（向後相容）。（更新註記）此項未被採納：RI 已被 CP 刻意完全取代、live code 無 RI（soft_sensor.py:3-6）；且鎖定命名規則為可信度顯示用「CP-band(可信度)」、UI/step-9 不得稱「RI」（golden-wizard 紅隊 must-fix）。base estimator 仍可沿用現有 PLS/GPR，CP 只是外掛校準層——**這對 `interface.py` 骨架是 surgical 改動**（新增 calibration set 與 conformal wrapper，不動五維度判斷鏈結構）。
 
 ### 4.2 地端化工 MVP：深度模型 vs GPR 的務實取捨
 

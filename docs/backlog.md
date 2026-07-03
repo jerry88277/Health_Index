@@ -4,6 +4,8 @@
 > 由 2026-06-02 對話決策轉為 repo 版本化真相（對話 context 不算可靠來源）。
 > 紀律承襲：綠燈才 commit（`[verified]`）、TDD 紅→綠、承載性結論派 ≥2 獨立紅隊、誠實 surface 不造假。
 
+> 狀態更新 2026-07：B1–B4 皆已完成或被取代——B1→server POST /timeline+/contribution + demo C1 時間線/window_detail 下鑽；B2→uci_gas_drift/ccpp/steel/indpensim adapter + data/tep 真實 .mat；B3→Holm FWER + alarm() 單一權威判決；B4→batch_dtw.py+indpensim 已建，批次方向改走 batch-AVM（docs/batch_avm_design.md）。本檔留作決策與 DoD 檔案紀錄。
+
 M0–M10（MVP 全棧）已收官。以下為已知缺口，皆**非 MVP 阻塞**，列為後續單元。
 **開發順序＝推薦優先序**：B1 → B2 → B3 → B4。
 
@@ -24,10 +26,13 @@ M0–M10（MVP 全棧）已收官。以下為已知缺口，皆**非 MVP 阻塞*
 
 **是什麼**：後端新增逐樣本端點，前端畫時間序列與肇因。
 - `GET /analyze/{job}/health`：逐樣本 T²/SPE/GSI 隨時間（campaign 內何時越限）。
+  - 標記已完成：實作為無狀態 `POST /timeline` / `POST /contribution`（命名偏離誠實標記見 server.py:5-13；MVP 無 job 持久層）。
 - `GET /analyze/{job}/contribution`：逐樣本 RBC（`mspc.rbc_spe`），指出**哪個變數**帶飄移。
 - 前端：per-sample 時間軸圖（T²/SPE + 控制限）＋ RBC 變數排序長條（告警樣本的肇因 top-k）。
 
 **為何重要**：目前前端只到 campaign 級「一根長條」。本專案核心價值「每變數在規格內、多變量卻飄移」要看出**何時**起、**哪個變數**——RBC 已實證可點名（drift 段比乾淨段高 14–49×、而單變數 3σ 越界率 ~0），缺的只是接線上 UI。
+
+> 已過時：demo（frontend/demo_app.py）已有 per-sample 時間線 hover + 點選下鑽 `window_detail`（C1，deployment_plan §6，c567833），RBC/GSI/T²/SPE 皆已上前端。
 
 **現況**：`mspc.py` 的 `t2/spe/gsi/rbc_spe` 全已實作並凍結於 golden-A fit；`server.py` docstring 已標這些端點為 M-later；前端 `build_*_figure` 為純函式好擴充。
 
@@ -44,10 +49,13 @@ M0–M10（MVP 全棧）已收官。以下為已知缺口，皆**非 MVP 阻塞*
 
 **是什麼**：把真實公開資料映射到統一 `interface.py` ProcessDataset 契約，沿用同一偵測鏈跑。
 - 候選（成本遞增）：**UCI Gas Sensor Array Drift**（CSV 直載、無授權門檻、本就是 drift 資料）→ **PRONTO**（真實工廠，需下載/解析）→ **TEP via tep2py**（需編 Fortran）。
+  - 已過時：TEP 走 `data/tep/` 真實 MMFDD .mat + `adapters/tep.py`，無需編 Fortran（2026-07-03 devlog 實地校正）。
 
 **為何重要**：目前全為合成 `synthetic.generate`。dev_plan §2 明示 pyTEP/合成是 oracle，正式採用須綁「真實集不退化」以破除循環論證。這是 **AC-4 的正式門檻**，也是真實工廠導入的信心來源。
 
 **現況**：`interface.py` 契約與 adapter 插槽已就緒（M1 設計）；尚無任何真實 adapter。
+
+> 已過時：真實 adapter 已建 uci_gas_drift / ccpp（UCI #294，真實 Y=PE）/ steel（UCI #851，真實 15min 時序）/ indpensim；`data/tep/` 有 12 個真實 MMFDD .mat、`tep.generate()` 實測可跑（batch_avm_design.md §11）。
 
 **範圍 / 誠實標記**：真實資料無精準 ground-truth（不像合成可注入已知飄移），驗證改為「golden 段不誤報 + 已知工況切換被偵測」。語意映射（哪些欄是 X/Y、grade/campaign 定義）須對照各資料集官方文件，**不臆測欄位語意**（Rule 8）。需下載＝需使用者確認網路/授權。
 
@@ -67,6 +75,8 @@ M0–M10（MVP 全棧）已收官。以下為已知缺口，皆**非 MVP 阻塞*
 
 **現況**：M6 用雙軌融合 + 硬閘安全網（H8），**未做嚴格 FWER**；`config.fwer_method` 已預留未接線；`health.py` docstring 誠實標此為待辦。子分數 s_l1/s_l2 為比例近似、s_l4 為 exp 衰減，**非嚴格尾機率**（N6 設計債）。
 
+> 已過時：FWER 已實作（health.py Holm 尾機率路徑 + P2 時間連續 split 修 L2 in-sample 樂觀 0.44→0.04；alarm()=is_alarm∨fwer_alarm 單一權威判決 d037a80）。殘留誠實邊界：`fwer_method` 欄仍硬編 Holm 未 dispatch（config.py:104）、非平穩 golden 之 acceptance hold-out FPR ~0.08、跨線多重比較為 2026-07-02 風險稽核新開放缺口。
+
 **範圍 / 誠實標記**：須先把各層轉為「對 golden null 的尾機率」（N6），再套 FWER。自相關資料的 null 須 block-permutation（synthetic 為 iid，真實集才顯）。
 
 **DoD**：
@@ -84,6 +94,8 @@ M0–M10（MVP 全棧）已收官。以下為已知缺口，皆**非 MVP 阻塞*
 **為何重要**：專案涵蓋連續＋批次兩型。連續＝穩態（L1–L4 已做，T²/SPE/MMD）；批次＝每 run 是長度不一的時間軌跡，須先 DTW 對齊才能比形狀。L5 是批次分支。
 
 **現況**：未實作；dev_plan v0.2 明示「連續型聚焦，L5 延後出 MVP，待批次資料就緒」。
+
+> 已過時：`detectors/batch_dtw.py` + `adapters/indpensim.py` 已建（L5 入五維鏈，離線預設關）。批次產品線現行方向＝batch-AVM X*=[param×stat] 路徑（docs/batch_avm_design.md；INC-1 `preprocess/batch_features.py` 已落地），B4 之「批次=DTW 為主」框架被取代。
 
 **範圍 / 誠實標記**：DTW 用在連續穩態無意義（Rule 12，不在連續資料硬套）；須有真正批次軌跡資料才開工。與 B1–B3（連續型）正交，可獨立排程。
 

@@ -4,6 +4,8 @@
 隱性飄移偵測器：同一條產線跑產品 A → 換線 B/C 或維修 → 回頭跑 A 時，偵測 **A 有沒有隱性飄移**
 （每個感測器都還在單變數規格內、但多變量關係或 X→Y 映射已偏移，單變數 SPC 抓不到），且**早於單變數 SPC**。
 
+產品核心＝**多產線健康儀表板**（點產線→即時記錄／告警歷史／模型資訊；告警下鑽到偏移的 X 參數或 Y 量測）；三目標 G1 純 Y-vs-歷史漂移／G2 Y 漂移→X 歸因／G3 Ŷ 越適用域→X 歸因，各以 SMTP 通知收尾（串接暫緩）。
+
 **偵測為確定性數學**（PCA T²/SPE、MCD、Wasserstein、DTW、conformal），runtime 不呼叫 LLM。
 
 ---
@@ -30,6 +32,7 @@ print(hi.is_alarm(X_new), hi.fwer_alarm(X_new))   # H8 雙軌 / AC-6 嚴格 FWER
 ```
 
 ## 線上模擬 demo（選資料→建模→確認→看健康指標）
+> 註：現行 5 步精靈將由 9 步 batch-AVM Golden 精靈取代（2026-07-02 定調，設計見 docs/batch_avm_design.md；INC-1 批次疊圖+[param×stat] 已建）。
 
 ```bash
 $env:PYTHONPATH="src"; python frontend/demo_app.py   # http://127.0.0.1:8051
@@ -46,7 +49,7 @@ L1 DQI_x 資料效度閘 → L2 T²/SPE 多變量域相似度 → L3 軟測量 �
 ```
 重點監看「非 A campaign 或維修後第一段 A」的 re-entry 期。資料基準：連續＝**TEP**、批次＝**penicillin/IndPenSim**。
 
-## 文件地圖（23 份 docs，依用途）
+## 文件地圖（依用途）
 
 | 我想… | 看這份 |
 |---|---|
@@ -56,6 +59,7 @@ L1 DQI_x 資料效度閘 → L2 T²/SPE 多變量域相似度 → L3 軟測量 �
 | 懂各指標定義（含對 AVM 偏離留痕）| [docs/avm_metrics_definitions.md](docs/avm_metrics_definitions.md) |
 | 查文獻（半導體↔化工，逐筆查證，唯一真相）| [docs/literature_crossref.md](docs/literature_crossref.md) |
 | 懂某設計為何「不做」（負面決策）| `docs/decision_*.md`（如門檻校準）|
+| 懂 batch-AVM 新路徑（Golden 兩關卡／X*=[param×stat]／小n CP／隱性 Y 漂移）| [docs/batch_avm_design.md](docs/batch_avm_design.md) |
 | 每日進度 | `docs/devlog/YYYY-MM-DD.md` |
 | 專案規範 | [CLAUDE.md](CLAUDE.md) |
 

@@ -6,9 +6,13 @@
 
 調查日期：2026-06-01
 
+加註採用狀態：FastMCD（dqi_x.py）、RBC（mspc.py）、ruptures PELT（segment.py/features.py）、Sakoe-Chiba band DTW（batch_dtw.py）皆已建；iForest/BOCPD/soft-DTW/AE/causal 未建仍為候選；本檔部分宣稱經 redteam_reconciliation.md（C4/D7/D8）降級，見各節註
+
 ---
 
 ## 模組 1 — L1 資料品質閘（現況：DQI_x = PCA k 維 Euclidean 距離 + sanity check）
+
+加註：現況已含 FastMCD robust 中心/協方差＋MCD-support 門檻＋median/MAD 標準化（本檔建議已採納並強化，dqi_x.py；M2, 2026-06-02）
 
 **痛點**：純線性、Euclidean 對 masking/swamping 敏感、未含現代感測器故障偵測（黏滯、drift、bias、漏量程）。
 
@@ -43,7 +47,7 @@
 
 | 名稱 | 解了哪個痛點 | 相對現有優勢 | 成熟度 | 計算成本 | 建議 | 代表文獻 + DOI |
 |---|---|---|---|---|---|---|
-| **ruptures / PELT** | 手刻 window + 啟發式規則 | 把分段化為「懲罰化最佳分割」優化問題；PELT 給**精確 O(n) 線性時間**解；統一 cost model（mean/var/linear/rbf） | 高（純 Python，依賴 numpy/scipy；review 涵蓋 140+ 法） | PELT 近線性；Binseg/Window 更輕；離線批次友善 | **取代**：以 ruptures(PELT) 取代手刻 SSD + grade transition，門檻變成一個 penalty 超參 | ruptures 套件: Truong, Oudre & Vayatis, [arXiv:1801.00826](https://arxiv.org/abs/1801.00826)；綜述: *Signal Processing* 2020, 167:107299, DOI [10.1016/j.sigpro.2019.107299](https://doi.org/10.1016/j.sigpro.2019.107299) |
+| **ruptures / PELT** | 手刻 window + 啟發式規則 | 把分段化為「懲罰化最佳分割」優化問題；PELT 給**精確 O(n) 線性時間**解；統一 cost model（mean/var/linear/rbf） | 高（純 Python，依賴 numpy/scipy；review 涵蓋 140+ 法） | PELT 近線性；Binseg/Window 更輕；離線批次友善 | **取代**：以 ruptures(PELT) 取代手刻 SSD + grade transition，修正：PELT 只給邊界，穩態判定仍需 ramp/std 準則（features.py），實為 penalty＋穩態準則兩組超參（reconciliation D8「未真消手刻規則」）；penalty 以 TEP 掃描定值（config.ssd_penalty） | ruptures 套件: Truong, Oudre & Vayatis, [arXiv:1801.00826](https://arxiv.org/abs/1801.00826)；綜述: *Signal Processing* 2020, 167:107299, DOI [10.1016/j.sigpro.2019.107299](https://doi.org/10.1016/j.sigpro.2019.107299) |
 | **Kernel change-point (KCP / rbf cost)** | 線性/均值-變異數 cost 抓不到分佈形狀改變 | RKHS 嵌入，characteristic kernel 偵測**任意分佈變化**；ruptures 內建 `model="rbf"` | 中高（理論一致性已證；penalty 選擇需調） | kernel Gram 矩陣 O(n²)，大窗需降採樣 | **補強**：對「均值不變但相關結構變」的隱性 grade transition，用 rbf cost | Garreau & Arlot, *Electron. J. Statist.* 2018, DOI [10.1214/18-EJS1513](https://doi.org/10.1214/18-EJS1513)；Arlot, Celisse & Harchaoui, *JMLR* 2019, [JMLR v20/16-155](https://jmlr.org/papers/v20/16-155.html) |
 | **Bayesian Online CPD (BOCPD)** | 離線分段無法即時偵測 re-entry 切換點 | **線上**遞迴、exact、不需預設 regime 數；run-length 機率可當切換置信度 | 高（演算法成熟，多開源實作） | 每步 O(t)（可截斷 run-length 成 O(1) 攤銷）；線上極輕 | **補強**：作為線上 re-entry 切換偵測（campaign 邊界即時化），與離線 ruptures 互補 | Adams & MacKay, 2007, [arXiv:0710.3742](https://arxiv.org/abs/0710.3742) |
 
@@ -78,7 +82,7 @@
 ### 2. 低成本高回報（可立即換）清單
 | 換什麼 | 換成 | 為何低成本高回報 |
 |---|---|---|
-| 原始 MSPC contribution plot | **RBC** (Alcala & Qin 2009) | 封閉解 O(m)、共用現有 PCA 模型；理論保證單變數故障必正確、嚴格消 smearing，零額外建模 |
+| 原始 MSPC contribution plot | **RBC** (Alcala & Qin 2009) | 封閉解 O(m)、共用現有 PCA 模型；理論保證單變數故障必正確、降級：消**單故障** smearing；多方向漂移並存時 RBC 自身仍殘留 smearing（reconciliation C4/H3——「嚴格消 smearing」為假），RBC 為「定位非因果」（mspc.py docstring 已按此實作註記） |
 | 手刻 SSD + grade transition 規則 | **ruptures(PELT)** | 純 Python/numpy、PELT 近線性；門檻塌縮成單一 penalty 超參，消除 window 長度啟發式 |
 | sample covariance（L1 baseline） | **FastMCD** (sklearn `MinCovDet`) | 一行替換、近線性、抗 masking；T²/SPE 介面不變 |
 | 裸 O(n²) DTW | **Sakoe-Chiba band / FastDTW** | 近線性、抑制病態映射；符合 Rule 6 線上成本上限 |
@@ -88,7 +92,7 @@
 ### 3. 確定性合規標記
 | 方法 | runtime 確定性 | 說明 |
 |---|---|---|
-| FastMCD / Mahalanobis | ✅ 確定性 | 純統計閉式 |
+| FastMCD / Mahalanobis | ✅ 確定性 | 修正：FastMCD 含隨機子集抽樣，須鎖 random_state＋顯式 support_fraction 才可重現（reconciliation D7；config.py:22,25 已如此治理）；且 p≫n 時 MinCovDet 靜默不穩（需 n>2p 或 PCA-score 預降維，highdim.py；B2 於 p=128 實測） |
 | Isolation Forest | ✅ 確定性 | 訓練後森林凍結，打分為確定性遍歷 |
 | RBC / 多維 RBC | ✅ 確定性 | 線性代數閉式 |
 | ruptures PELT / kernel CPD | ✅ 確定性 | 動態規劃最佳化 |

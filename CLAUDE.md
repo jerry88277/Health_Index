@@ -7,13 +7,13 @@
 
 ## 專案脈絡 (Context)
 
-取成大鄭芳田教授 **AVM（自動虛擬量測）的精神**，做一個**泛化工製程**的健康度／隱性飄移偵測程式。
+取成大鄭芳田教授 **AVM（自動虛擬量測）的精神**，做一個**泛化工製程**的健康度／隱性飄移偵測程式。產品核心（北極星，2026-07-02 定調）：**多產線健康儀表板**——點產線→線上即時記錄／告警歷史／模型建立資訊，告警下鑽到偏移的 X 參數或 Y 量測；三目標 G1（純 Y-vs-歷史漂移，獨立於 X）／G2（Y 漂移→X 歸因）／G3（Ŷ 越適用域→X 歸因），各以 SMTP 通知收尾（串接暫緩）。當前最優先＝9 步 batch-AVM 精靈（設計見 docs/batch_avm_design.md）。
 
 - **要解的問題**：同一條產線跑產品 A → 換線生產 B/C 或停機維修 → 回頭跑 A 時，**A 有沒有隱性飄移**？「隱性」＝每個感測器都還在單變數規格內、但多變量關係或 X→Y 映射已偏移，單變數 SPC 抓不到。
 - **AVM 初衷**：以虛擬量測（軟測量）取代破壞性／昂貴抽樣——用製程參數 X 算出可能的量測值 Ŷ，並在預測不可信時提前預警。
 - **判斷鏈（MECE，第一性原理）**：
-  `L1 DQI_x 資料效度閘 → L2 T²/SPE/GSI 多變量域相似度 → L3 軟測量 Ŷ + RI 可信度 → L4 campaign 級 Wasserstein/KL 分佈漂移 →（批次）L5 DTW 軌跡對齊 → Health Index 0–1 + 觸發旗標`，重點監看「非 A campaign 或維修事件後第一段 A」的 re-entry 期。
-- **資料基準**：連續製程＝**TEP (Tennessee Eastman)**；批次軌跡＝**penicillin / IndPenSim**。架構預留真實產線資料的 adapter 接口。
+  `L1 DQI_x 資料效度閘 → L2 T²/SPE/GSI 多變量域相似度 → L3 軟測量 Ŷ + conformal（CP-band）可信度 → L4 campaign 級 Wasserstein/KL 分佈漂移 →（批次）L5 DTW 軌跡對齊 → Health Index 0–1 + 觸發旗標`，重點監看「非 A campaign 或維修事件後第一段 A」的 re-entry 期。
+- **資料基準**：連續製程＝**TEP (Tennessee Eastman)**；批次軌跡＝**penicillin / IndPenSim**；G1 純 Y 漂移之 ground truth＝**合成儀器漂移 adapter**（TEP 的 Y=f(X)，結構上不可證 G1）。架構預留真實產線資料的 adapter 接口。
 - **技術棧**：Python；numpy / scipy / scikit-learn / pandas / POT / pytest。**偵測器為確定性數學，runtime 不呼叫 LLM**。
 - **文獻佐證**：以 `docs/literature_crossref.md`（半導體↔化工兩邊參照，逐筆查證）為唯一真相，嚴禁捏造。
 
@@ -39,7 +39,7 @@
 明列假設，尤其**半導體→化工的可轉移性假設**（如：AVM 預設 batch/R2R，化工多為連續製程；GSI 門檻來自靜態歷史）。不確定就問，不要猜。模稜兩可時並陳多種詮釋。有更簡單做法就反對。搞不清楚「某指標在化工是否成立」時停下並指名。
 
 ## Rule 2 — Simplicity First
-最小可解程式，不做投機功能。先在 TEP + penicillin 上跑通五維度判斷鏈即可；**Health Index 融合先用簡單加權**，不要一開始就上 learned meta-model。指標不超出五維度框架。資深工程師會嫌過度設計就簡化。
+最小可解程式，不做投機功能。先在 TEP + penicillin 上跑通五維度判斷鏈即可；**Health Index 融合先用簡單加權**，不要一開始就上 learned meta-model。指標不超出五維度框架（例外：G1 純 Y-vs-歷史監控依 2026-07-02 裁決為**獨立輕量模組**（CUSUM/KS on raw Y），刻意不強塞五層 PCA/T²/SPE 框架——這正是 Rule 2 的應用）。資深工程師會嫌過度設計就簡化。
 
 ## Rule 3 — Surgical Changes
 **五維度 MECE 判斷鏈與統一資料契約 (`interface.py`) 是骨架，保持穩定**；只動領域層（adapters、案例、門檻、製程命名）。不順手「改善」相鄰 code／註解／格式，不重構沒壞的東西，沿用既有風格。

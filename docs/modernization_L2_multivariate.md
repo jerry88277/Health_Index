@@ -64,7 +64,7 @@
 - **計算成本**：中。需 SVD on Hankel 矩陣；線上投影成本與 PCA 相當；recursive 版可線上更新。
 - **建議：augment（高優先候選）**。在「動態 + incipient 飄移偵測」上，CVA 是化工原生、有控制限、確定性的成熟解，比 DPCA 更強，是本專案 re-entry 期隱性飄移偵測最對味的方法之一。風險：Hankel/lag 階數與 state order 需選定，實作較 DPCA 重。
 - **代表文獻**：Russell, Chiang, Braatz, "Fault detection in industrial processes using canonical variate analysis and dynamic principal component analysis", *Chemometrics and Intelligent Laboratory Systems*, vol.51, no.1, pp.81–93, 2000. DOI: 10.1016/S0169-7439(00)00058-7 · <https://www.sciencedirect.com/science/article/abs/pii/S0169743900000587>
-  - incipient 近作："Incipient fault detection for dynamic processes with canonical variate residual statistics analysis", *Chemometrics and Intelligent Laboratory Systems*, 2024. DOI: 10.1016/j.chemolab.2024.105165 · <https://www.sciencedirect.com/science/article/abs/pii/S0169743924001291>（DOI 待最終核對；以 ScienceDirect 頁面為準）
+  - incipient 近作："Incipient fault detection for dynamic processes with canonical variate residual statistics analysis", *Chemometrics and Intelligent Laboratory Systems*, 2024. DOI: 10.1016/j.chemolab.2024.105189 · <https://www.sciencedirect.com/science/article/abs/pii/S0169743924001291>（Ji, Hou, Shao, Zhang, *Chemom. Intell. Lab. Syst.* 252:105189, 2024——redteam_citations.md 已查定並補齊作者/卷期）
 
 ---
 
@@ -179,7 +179,7 @@
 - **計算成本**：高（訓練 GPU + 大量資料；flow 層數多時推論成本中高）；推論確定性。
 - **建議：不採用（現階段）**。製程時序領域證據薄、資料需求大；密度監控的價值 KDE-based KPCA/ICA 已能以更輕方式提供。
 - **代表文獻**：Dinh, Sohl-Dickstein, Bengio, "Density estimation using Real NVP", *ICLR 2017*. arXiv:1605.08803 · <https://arxiv.org/abs/1605.08803>（方法奠基，DOI: NOT FOUND — 會議論文）
-  - 時序應用："Conditional normalizing flow for multivariate time series anomaly detection", *ISA Transactions*, 2023. DOI: 10.1016/j.isatra.2023.09.004 · <https://www.sciencedirect.com/science/article/abs/pii/S0019057823004020>（DOI 以 ScienceDirect 頁面為準）
+  - 時序應用："Conditional normalizing flow for multivariate time series anomaly detection", *ISA Transactions*, 2023. DOI: 10.1016/j.isatra.2023.09.002 · <https://www.sciencedirect.com/science/article/abs/pii/S0019057823004020>（Guan et al., *ISA Trans.* 143:231–243, 2023；redteam_citations 補登，並註「通用 MTS 異常偵測、非 TEP/化工專屬，引用須標題材類比」）
 
 ---
 
@@ -234,11 +234,12 @@
 
 ## 4. 待核對項（誠實標記，未捏造）
 
-- §1.3 CVA incipient 近作（2024）與 §1.13 NF 時序應用（2023）的 DOI 以 ScienceDirect 頁面顯示為準，未逐位元核對 CrossRef，標為「以頁面為準」。
+- §1.3 CVA incipient 近作（2024）與 §1.13 NF 時序應用（2023）的 DOI 已核對（redteam_citations.md，2026-06-02）——兩筆 DOI 皆更正（CVA→.105189；NF→.09.002），本節不再掛待核。
 - §1.11 TEP-GNN（arXiv:2210.11164）與 §1.12 Anomaly Transformer、§1.13 Real NVP 為會議/preprint，**無 DOI（標 NOT FOUND）**，僅附 arXiv/OpenReview URL。
 - 其餘已驗證 DOI（KPCA Lee 2004、DPCA Ku 1995、CVA Russell 2000、SFA Shang 2015、ICA Lee 2004、PPCA Kim&Lee 2003、Deep SVDD Ruff 2018、GDN Deng&Hooi 2021、GAN Yang 2019）均經 WebSearch 交叉確認作者/卷期/年份。
 
 ### 下一步
 
 - 建議先在 TEP 上把 **DPCA** 接成 L2 baseline（最低成本補 ③），再加 **SFA**、**CVA** 做 A/B 比較，以成功判準第 2、3 條為驗證目標。
+  - 【狀態】L2 已建為靜態 PCA＋經驗控制限＋RBC（mspc.py, M3, 2026-06-02）；DPCA 僅預留 config.x_lag_order 未接線，SFA/CVA 未建（皆仍 P2 候選）；2026-07 起優先序讓位於新精靈 batch-AVM 管線（X* 的 GSI/T²/SPE 用 fresh 偵測器＋highdim.py PCA-score 預投影，非本節 L2 升級）。
 - 把本檔三個首選方法的 DOI 補登進 `docs/literature_crossref.md` 維度 5（PCA→MSPC）的延伸列，維持單一真相。

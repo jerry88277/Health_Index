@@ -37,7 +37,7 @@
 ## 7. 隱性 Y 漂移監控（DQIy 網路深查裁決）
 - **DQIy/ART2 不適用**：DQIy 是逐筆量測的**資料品質准入閘**（不是漂移偵測）；ART2 線上學習會**把慢漂移吸收進移動原型**、永不報警，且順序相依/噪聲敏感（違反 Rule 5）。→ **砍 ART2 DQIy**，只留 **DQIx 當 L1 資料品質閘**。
 - **隱性 Y 漂移改用**（MECE，重用既有件）：
-  - 緩慢 creep → **EWMA/CUSUM 監控殘差 e=y−ŷ**（漂移集中於殘差＝Rule 9 用於殘差）。
+  - 緩慢 creep → **EWMA/CUSUM 監控殘差 e=y−ŷ**（漂移集中於殘差＝Rule 9 用於殘差）。⚠ G1 註記（2026-07-02 使用者裁決）：殘差經 ŷ 依賴 X，**不滿足 G1**「獨立於 X 與 Control-Limit 的純 Y-vs-歷史監控」；G1 另立獨立輕量模組（CUSUM/KS on raw Y），ground truth＝合成儀器漂移 adapter（TEP 的 Y=f(X) 結構上不可證）；G1×G3 同窗共發＝兩封信（優先規則）。
   - 離散 step（re-entry）→ change-point。
   - 分佈位移 → **L4 Wasserstein/KL（已有）**。
   - 有保證升級 → conformal martingale（接 split-CP）。
@@ -52,6 +52,7 @@
 
 ## 10. TDD 順序與狀態
 1. **[x] TDD-0 CP 小 n**：`conformal_cv.py` CV+/jackknife+（自有門檻、誠實 ≥1−2α）；6 測試綠、全套 445 passed。
+1b. **[x] INC-1 批次疊圖 + [param×stat] 指標轉換**：`preprocess/batch_features.py`（batch_temporal_overlay／batch_indicator_matrix；resample 僅畫圖層、count 原生格餵 DQIx、cv |mean| floor）；6 WHY 測試綠、全套 451 passed（5052b8a，2026-07-03）。
 2. [ ] TDD-3 結構隔離測試（batch-AVM 不回主 HealthIndex）。
 3. [ ] TDD-4 n 一致性/長度測試 → min/max/range + n-guard + fixed-p fallback；極值→DQIx sensor-health。
 4. [ ] TDD-殘差 Y 漂移監控（EWMA/CUSUM on e=y−ŷ，自相關感知、不差分）。
@@ -64,7 +65,7 @@
 - **Barber, Candès, Ramdas & Tibshirani 2021「Predictive inference with the jackknife+」**（Ann. Statist. 49(1):486–507）：CV+/jackknife+ 的 ≥1−2α 底線來源——**不在 crossref**，須 VERIFY 後方可作已驗證引用。
 - **DQIy DOI（已解，前述衝突為 stale）**：crossref `:26/27` 已統一為 `10.1109/TSM.2011.2146006`、狀態 VERIFIED、附 IEEE 連結，為權威。網路調查曾出現 `10.1109/TSM.2011.2154910`——與 VERIFIED 條目衝突，值得再確認一次，但不推翻 crossref。
 - EWMA/CUSUM ARL（~10 vs ~44 子組）來自 JMP portal，非原始文獻；ART2 正典（Carpenter & Grossberg 1987, Applied Optics 26:4919-4930）；Kadlec 2011/2009、Kaneko&Funatsu TD、conformal martingale（J. Process Control 2025 DOI 尾碼 placeholder）——全待 VERIFY。
-- **TEP 資料實地校正（更正先前「無 .mat」誤述）**：`data/tep/` 有 12 個真實 MMFDD-TEP `.mat`，`tep.generate()` 本環境可跑（實測 300 列/22 感測器/稀疏 Y）。**既有五維鏈**對「注入型」隱性飄移（打亂高相關 XMEAS 時序、保邊際破相關）已**實測**：單變數 univ≈0.04（盲）、HI drift 0.55 vs 乾淨 0.95（見 `adapters/tep.py` docstring）。誠實限制：9 個**真實 IDV 故障無一**重現「單變數盲/多變量抓」（故 covert drift＝注入刺激、明確標記非真實物理失效）。**尚未實測**：**新** batch-AVM 路徑（X\*=[param×stat]、殘差 EWMA/CUSUM、多機台 fleet）在 TEP 上的表現——因該路徑尚未建（非資料限制；資料在，建好即可測）。
+- **TEP 資料實地校正（更正先前「無 .mat」誤述）**：`data/tep/` 有 12 個真實 MMFDD-TEP `.mat`，`tep.generate()` 本環境可跑（實測 300 列/22 感測器/稀疏 Y）。**既有五維鏈**對「注入型」隱性飄移（打亂高相關 XMEAS 時序、保邊際破相關）已**實測**：單變數 univ≈0.04（盲）、HI drift 0.55 vs 乾淨 0.95（見 `adapters/tep.py` docstring）。誠實限制：9 個**真實 IDV 故障無一**重現「單變數盲/多變量抓」（故 covert drift＝注入刺激、明確標記非真實物理失效）。**尚未實測**：**新** batch-AVM 路徑（X\*=[param×stat]、殘差 EWMA/CUSUM、多機台 fleet）在 TEP 上的表現——X*=[param×stat] 轉換核心已建（`preprocess/batch_features.py`，INC-1）；映射模型／X* MSPC／殘差監控／fleet 尚未建，端到端仍未在 TEP 實測（非資料限制；資料在，建好即可測）。
 
 ## 12. 待建基礎建設
 - Gate2「%進度轉換」= 淨新增（專案 code 無 background/long_callback）→ **dcc.Interval 輪詢 + job-state store**（使用者選輕量版）；同步回呼算 80 張會凍住 Dash worker，禁用。

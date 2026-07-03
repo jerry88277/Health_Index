@@ -67,7 +67,7 @@
 
 ## 4. 對本專案 `interface.py` 資料契約的具體建議
 
-> 注意：`interface.py` 目前**尚未建立**（Glob 全庫未找到）。以下為 M0 設計該契約時的欄位建議，落地時請與五維度判斷鏈對齊，並遵守 Rule 3「資料契約是骨架，保持穩定」。
+> 狀態更新：契約已落地於 `src/health_index/interface.py`（採用 campaign_id / grade_label / mode / run_id / is_golden_a / y_timestamp / y_delay；`is_golden_A`→實名 `is_golden_a`，`x_lag_order` 移入 config，`window_index` 未採用）。machine_id 已裁決加入 RESERVED（僅 provenance、非偵測器輸入，batch_avm_design.md §2），落地排於 TDD-7~10。以下表格保留為當時設計依據存檔。
 
 建議的最小資料契約欄位（對應 (a)–(e)）：
 
@@ -84,6 +84,8 @@
 | `y_timestamp` | datetime / null | lab 取樣的真實時刻（非登錄時刻） | (b)(e) | delayed irregular（Guo 2014） |
 | `y_delay` | float / null | 估計的 X→Y 對齊延遲 d（用於把 Y 對回 X(t−d)） | (b) | time-delay est.（Xiong 2017） |
 | `is_golden_A` | bool | 是否屬乾淨的 golden-A baseline 段（建基準用，不參與自適應更新） | (c)(d) | baseline 與自適應分離（Kadlec 2011 之張力） |
+
+（加註）實際契約未採用 `window_index`；`x_lag_order` 以 config 參數而非資料欄位落地；`is_golden_A` 實名為 `is_golden_a`。差異以 interface.py 為準。
 
 設計要點（第一性原理）：
 1. **雙軌樣本**：契約同時支援「逐時刻 lagged 樣本」（`window_index`/`x_lag_order`）與「穩態 pseudo-run」（`run_id`），對應 §3.1 兩種慣例，避免日後為某一層硬改骨架。

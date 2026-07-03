@@ -3,6 +3,7 @@
 > 目的：把目前以 synthetic/TEP 為主的 X&Y 健康指標，泛化到**任意多變量連續製程 + 軟量測**資料集
 > （不限化工）。本檔以**第一性原理 + MECE** 盤點缺口，附決策對比表與可平行開發的優先級路線。
 > 建立：2026-06-10（git 時間為權威）。狀態圖例：`[ ]` 未開始 / `[/]` 進行中 / `[x]` 完成。
+> 狀態註記：2026-07 起專案優先序移至 batch-AVM 9 步精靈 + 多產線儀表板 + G1/G2/G3 監控目標（docs/batch_avm_design.md 為新方向真相）；本檔泛化桶 1–6 大致收官，殘餘開放項僅 §7 末（桶 3b-cont 偵測力、indpensim FWER 自相關）。
 
 ---
 
@@ -51,7 +52,7 @@
 ### 桶 2 — Y／軟量測健康（**X&Y 核心**）
 - **缺**：(a) 可擴展軟量測（PLS／線性 fallback，大 n 與低 n/p 友善；多輸出 Y）；
   (b) **統一 Y 健康分數**（軟量測殘差健康 ⊕ Y 分布健康 Y-MSPC → 單一 0–1）；
-  (c) X→Y 映射可信度（RI/CP）升為一級指標並入融合。
+  (c) 可信度不得稱 RI（CP 已刻意取代 RI，soft_sensor.py:3-6；批次路徑稱 CP-band）。C2 落地為 `HealthIndex.confidence`（T² 操作域可信度）+ `bundle.y_health` 正交呈現（deployment_plan §6，d552184），未入融合——正交呈現為定案，非待辦。
 - **為何**：使用者明指「X&Y...軟量測」；現況 GPR 不可擴展、Y 健康分散在 `/softsensor` 與 `/yhealth`。
 - **相依**：桶 1 的 Y 欄約定（多 Y 用 `yq_` 前綴，已存在於 tep）。**平行**：與桶 3/4 獨立。
 
@@ -62,7 +63,7 @@
 - **相依**：偵測器層。**平行**：與桶 2/4 獨立。
 
 ### 桶 4 — 前處理穩健
-- **缺**：(a) 缺值/NaN 欄處理（真實資料有斷點）；(b) **無 grade/mode 時的 golden 自動挑選**
+- **缺**：(a) 缺值/NaN 欄處理（真實資料有斷點）；(b) **無 grade/mode 時的 golden 自動挑選**【已解：golden='auto'（最早乾淨平穩段啟發式）已於 deployment 桶0 落地（aca5f0a，紅隊驗 20/20 不選 drift，deployment_plan §6 Phase 1）。】
   （現況 golden 由真值 mask 給；通用資料集需「取前 X% 平穩段為 golden」啟發式）；(c) 非平穩基準（EWMA/recursive）。
 - **為何**：通用攝入後資料更髒；golden 定義不能再靠 dataset-specific mask。
 - **相依**：桶 1（攝入）。**平行**：(a) 可先行。

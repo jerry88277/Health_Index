@@ -1,6 +1,6 @@
 # 前端設計指南（design-advisor + taste-skill 落地）
 
-> 用途：交付前端（監控產品 UI + 銷售 pitch 頁）的設計依據。
+> 用途：交付前端（監控產品 UI）的設計依據。銷售 pitch 頁已於 2026-06-16 決定不做（§4）；taste-skill 規則保留為反-slop 參考知識。
 > 依全域規範：外部 skill 知識先落地為 repo 版本化真相，再進入實作（對話 context 不算可靠來源）。
 > 來源（2026-06-16 擷取理解，**非逐字複製**——上游 `SKILL.md` 為權威，細節以上游為準）：
 > - design-advisor：<https://github.com/YuriCrystal/design-advisor>（`skills/design-advisor/SKILL.md`，MIT）
@@ -41,7 +41,7 @@
 
 ## 4. 本專案前端的設計決策（落地）
 
-- **監控產品 UI**（已出可點擊互動原型）：採 design-advisor。三屏＝總覽 → 新建精靈 → 結果下鑽，對應 Shneiderman 真言（overview → zoom → details-on-demand）+ Hick（首頁 2 主決策）+ 漸進揭露（細節指標藏下鑽）。
+- **監控產品 UI**（已出可點擊互動原型）：採 design-advisor。三屏＝總覽 → 新建精靈 → 結果下鑽，對應 Shneiderman 真言（overview → zoom → details-on-demand）+ Hick（首頁 2 主決策）+ 漸進揭露（細節指標藏下鑽）。〔2026-07 更新：產品核心已鎖定為「多產線健康儀表板」——點產線進入 線上即時記錄／告警歷史（可展開下鑽到偏移的 X 參數或 Y 量測）／模型建立資訊 三部分；現行 5 步新建精靈將由 9 步 batch-AVM Golden 精靈（兩關卡看圖選 Golden）取代，設計見 docs/batch_avm_design.md §3。本節設計原則（漸進揭露、語義色、反-slop）沿用不變。〕
 - **通用反-slop（產品 UI 也採用 taste-skill 的可移植硬規則）**：em-dash 禁用（改用 `·`／`、`／`→`）；**語義色 vs accent 分離**——綠=健康、紅=告警為**固定語義狀態色**（不可亂改），藍=可信度與測試段，附 legend；字體紀律、單一品牌強調色。
 - **銷售 pitch / landing 頁**：**不做**（使用者 2026-06-16 決定，直接展示系統前端）。taste-skill 規則（§3）保留為**參考知識**，日後若需行銷頁再啟用；曾建之 `frontend/landing.html` 已移除。
 
@@ -73,7 +73,7 @@
 ### 分級與進度
 - **P0（已實作 74bd6bf）**：wall-clock 時間軸、驗收真接上（FAIL 擋上線）、告警可信/存疑判定橫幅、總覽各模型當前健康燈。
 - **P1（roadmap）**：告警清單表（點 row 進下鑽）、門檻/persistence_k slider、生命週期面板（currency/重建）、匯出 CSV/PDF、ACK/消音/處置留痕、聲音告警、位號(tag)對照 + DCS/historian 趨勢連結。
-- **P2（需使用者拍板的產品層，新後端基礎建設）**：全廠 廠→區→裝置→產品 階層視圖、事件閉環+MTTR、ROI 效益看板、權限分層+稽核 log、手機 responsive。
+- **P2（需使用者拍板的產品層，新後端基礎建設）**：全廠 廠→區→裝置→產品 階層視圖、事件閉環+MTTR、ROI 效益看板、權限分層+稽核 log、手機 responsive。〔2026-07-02 已拍板：多產線健康儀表板即產品核心 north star，非待決 P2；廠區階層已於增量 7 落地（§7）。〕
 > Rule 7 範圍誠實標：P2 是新產品層級（數週工程），非一次 UI 優化能補；建議單一裝置付費試點先行（處長語）。
 
 ---

@@ -1,6 +1,7 @@
 # 紅隊三方對帳報告（球員兼裁判的補正）
 
 > 日期 2026-06-02 · 對帳對象：`modernization_map.md`（建議）+ `modernization_audit.md`（我的自我審核 F1–F3/H1–H8）
+> 狀態註記（2026-07）：§4 淨設計已於同日回填三份設計文件 v0.2 並經 M0–M10/B1–B4 實作落地（devlog 2026-06-02/03）；其後 2026-07 產品重聚焦（多產線儀表板/G1–G3/batch-AVM 新精靈）與 CV+/jackknife+（2026-07-02）進一步演進，本檔為歷史對帳紀錄，現行承載性設計見 batch_avm_design.md 與 memory。
 > 三位獨立紅隊：R1 統計嚴謹度（`redteam_statistical.md`）、R2 產業落地（`redteam_deployment.md`）、R3 文獻誠信（`redteam_citations.md`）
 > 原則：衝突 surface 不平均（Rule 7）；不確定一律標記（Rule 12）
 > 元結論：**我的自我審核無捏造、無方向性錯誤，但在 F2/F3/H1/H3/H7/H8 六處「修對一半」**——印證自審的共同盲點，紅隊有實質增值。
@@ -43,11 +44,11 @@
 | # | 盲點 | 衝擊 | 處置 |
 |---|---|---|---|
 | N1 🔴 | **檢定力公式張冠李戴**：`n≈2(z+z)²/δ²` 是**單變量均值位移**公式，**不描述 covariance/relationship 漂移**的檢定力 | 我把它當「硬限制」引用是錯的 | 改用 **TEP 上模擬 relationship-drift 的 power curve** 實證下限 |
-| N2 🔴 | **全鏈無多重比較校正（FWER 膨脹）**：多 detector×多 permutation 各自 α | **破壞 DoD 第1條「golden-A 維持低分」**（健康期也誤報）| 單一融合分數＋單一閾值為唯一決策點（各 detector 當特徵），或 Holm/BH |
-| N3 | **PCA 分數空間 permutation 的 exchangeability** | 不凍結 PCA → null 偏樂觀、p-value 虛低 | PCA/DPCA/SFA 在 golden-A fit 後**凍結**，permutation 只重排標籤；TEP 上驗 null type-I≈α |
+| N2 🔴 | **全鏈無多重比較校正（FWER 膨脹）**：多 detector×多 permutation 各自 α（✅ 已於 B3 落地：health.py `fwer_alarm`＝尾機率→Holm 單一決策點，golden FPR=0.021≤α 實測；**跨線（multi-line）多重比較仍開放**，2026-07 風險稽核列管） | **破壞 DoD 第1條「golden-A 維持低分」**（健康期也誤報）| 單一融合分數＋單一閾值為唯一決策點（各 detector 當特徵），或 Holm/BH |
+| N3 | **PCA 分數空間 permutation 的 exchangeability**（✅ 已落地：drift.py 於 golden fit 後凍結標準化/PCA、permutation 只重排樣本，並用 block-permutation 保短程相依，M5） | 不凍結 PCA → null 偏樂觀、p-value 虛低 | PCA/DPCA/SFA 在 golden-A fit 後**凍結**，permutation 只重排標籤；TEP 上驗 null type-I≈α |
 | N4 | **自相關雙重破壞**：F/χ² 控制限低估＋iid permutation null 過窄 | 連續製程誤報率上升 | 控制限用 block-bootstrap/KDE；改 **block-permutation** 保短程相依 |
 | N5 | **漂移量級不可跨段/跨核比較**：Sinkhorn/MMD 值依 ε、核、標準化 | 直接比大小誤導 | 量級先對 **golden-A null 標準化**(z-score)再跨段比 |
-| N6 | **Health Index 0–1 融合的單調性/校準未定義** | DoD 三條無法保證 | 各分量先轉**對 golden-A null 的尾機率**再加權；TEP 校準權重並驗單調(Rule 9) |
+| N6 | **Health Index 0–1 融合的單調性/校準未定義**（部分落地：M6 融合＋B3 各層→golden-A null 尾機率→Holm；單調性/權重校準專項驗證 NOT VERIFIED） | DoD 三條無法保證 | 各分量先轉**對 golden-A null 的尾機率**再加權；TEP 校準權重並驗單調(Rule 9) |
 
 ### 落地層（R2）
 | # | 盲點 | 處置 |
@@ -63,8 +64,8 @@
 
 ## 4. 對帳後的「淨設計」更新（取代 audit C 段）
 
-- **L4 漂移**：**KS-on-PCA-score 廉價 1D first-pass → 觸發/需多維才升 MMD**；量級**先用解析 1D-Wasserstein on PCA-score**（無 ε），Sinkhorn 留待真需多維 OT 幾何；PSI **僅供溝通、不參與顯著性**；**全部對 golden-A null 標準化**；**block-permutation＋凍結模型**；**單一融合決策點＋FWER 控制**。
-- **可信度**：GSI/T²/SFA 擔無標籤可信度；**ICAD（免標籤 conformal p-value）與 GSI 並列比較**；split-CP 僅在累積足夠 lab-Y 後上線（定最小 calibration 門檻）；**時序 CP 不宣稱保證**（re-entry 破前提）。
+- **L4 漂移**：**KS-on-PCA-score 廉價 1D first-pass → 觸發/需多維才升 MMD**（✅ 已落地：detectors/drift.py＝KS first-pass＋MMD block-permutation＋解析 1D-Wasserstein 對 null 標準化＋PSI 僅溝通，M5；單一融合決策點＋FWER＝B3）；量級**先用解析 1D-Wasserstein on PCA-score**（無 ε），Sinkhorn 留待真需多維 OT 幾何；PSI **僅供溝通、不參與顯著性**；**全部對 golden-A null 標準化**；**block-permutation＋凍結模型**；**單一融合決策點＋FWER 控制**。
+- **可信度**：GSI/T²/SFA 擔無標籤可信度；**ICAD（免標籤 conformal p-value）與 GSI 並列比較**；split-CP 僅在累積足夠 lab-Y 後上線（定最小 calibration 門檻）（已實作 cp_min_calibration=200＝M4；**其後被 CV+/jackknife+ 擴充**：小 n 自有門檻 cv_plus_min_obs=20、誠實覆蓋 ≥1−2α=0.80@α=0.1，detectors/conformal_cv.py，2026-07-02——冷啟動不再只能退 GSI）；**時序 CP 不宣稱保證**（re-entry 破前提）。
 - **診斷**：RBC replace，但**「嚴格消 smearing」降級為「消單故障 smearing、多方向殘留」**，UI 標「定位非因果」。
 - **L2**：DPCA 加 **n≥10·p(l+1) 硬 gate**，不足退靜態 PCA 並 surface；控制限對自相關用 block-bootstrap/KDE。
 - **確定性合規**：所有含 RNG（permutation/CP ensemble/FastMCD）鎖 seed＋容忍帶；**優先解析門檻**；審計記錄 B 與 seed。
@@ -78,4 +79,4 @@
 - **硬限制（三方一致）**：少量點受檢定力下限約束，地端冷啟動受**資料累積時間**約束，非演算法可解。
 
 ## 6. 元結論
-派紅隊是對的：自審抓到表層（無捏造、無方向錯），但**6/11 條修對一半、且漏掉 N1–N6/D1–D8 共 14 個雙方盲點**——其中 **N2（FWER 破壞 DoD）、N1（功效公式用錯）、H7（確定性誤判）** 是會實際影響正確性的硬傷。**這些必須在回填三份設計文件時一併納入。**
+派紅隊是對的：自審抓到表層（無捏造、無方向錯），但**6/11 條修對一半、且漏掉 N1–N6/D1–D8 共 14 個雙方盲點**——其中 **N2（FWER 破壞 DoD）、N1（功效公式用錯）、H7（確定性誤判）** 是會實際影響正確性的硬傷。**這些必須在回填三份設計文件時一併納入。**（✅ 已完成：設計文件 v0.2 同日回填，見 development_plan.md「變更紀錄」與 devlog 2026-06-02 commit 72a4173）

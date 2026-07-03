@@ -2,6 +2,7 @@
 
 > 對象：資料科學家 / 製程工程師。目標：用公開資料集把「選資料→建模→模擬→看健康指標→告警」跑通。
 > PI 介接為 stub（`PISource`，NOT VERIFIED），現場換真酒見 §6。模組：`src/health_index/deploy/`。
+> 現行建模精靈將被 9 步 batch-AVM Golden 精靈取代（docs/batch_avm_design.md §3；INC-1 `preprocess/batch_features.py` 已落地）；替換前本指南仍為有效操作文件。
 
 ---
 
@@ -25,13 +26,13 @@ tl = demo.score_timeline(m["bundle_path"], "synthetic", window=60)
 print(tl["n_alarms"], tl["points"][0])
 ```
 
-## 2. UI demo（4 步操作）
+## 2. UI demo（多畫面＋5 步建模精靈）
 
 ```bash
 set PYTHONPATH=src           # PowerShell: $env:PYTHONPATH="src"
 python frontend/demo_app.py  # 開 http://127.0.0.1:8051
 ```
-四步：選資料範圍 → 建立模型 → 確認模擬資料 → 查看健康指標（時間線：綠=黃金/乾淨回歸、紅=殘留飄移、❌=告警）。
+五步精靈：選資料源 → 訓練資料範圍 → 測試資料範圍 → 建立模型 → 完成（frontend/demo_app.py:215）；另有 home 總覽、告警事件（events）、歷史（history）、段分析（segview）畫面，結果頁支援 GSI/T²/SPE/RBC 點選下鑽（window_detail）。
 （舊 `frontend/app.py` 作廢；UI 視覺未渲染驗證，邏輯由 `tests/test_demo.py` 保證。）
 
 ## 3. 線上評分 runner（排程輪詢，takt/10）

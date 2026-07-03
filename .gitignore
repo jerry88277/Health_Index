@@ -19,3 +19,6 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# 待使用者確認後手動刪除的盤點暫存區
+TEMP/

@@ -55,7 +55,7 @@ flowchart LR
 
 - **首選：Extended TEP (Reinartz 2021) + pyTEP 生成器。** 直接含 **6 production modes + mode transition**，CC BY 4.0 全開放，欄位語意與 grade A/B/C 切換、re-entry 場景一一對應。pyTEP (BSD-3) 可程式化生成「A→B→回 A 並注入隱性飄移」的 ground-truth，是製作 golden-A baseline 與帶標記 drift 案例的理想工具。**這是 cross-validation 的錨點。**
 - **次選（真實工廠互補）：PRONTO heterogeneous benchmark（Cranfield 多相流升級版，Zenodo, CC BY 4.0, DOI 10.5281/zenodo.1341583）。** 真實工廠、24+ 連續變數、multi-modal operational condition + induced faults，補足 TEP「純模擬」的 domain gap，驗證偵測器對真實感測雜訊的魯棒性。其前身 Cranfield TPFF（24 變數、1 Hz、6 faults）若要更輕量可用 Kaggle 鏡像。
-- **第三（drift 語意專測）：UCI Gas Sensor Array Drift（CC BY 4.0, DOI 10.24432/C5RP6W）。** 唯一「sensor/concept drift」本身就是 ground-truth 的開放集，跨 36 月 10 batches 的時間漂移結構，正對應「每變數在規格內但 X→Y 映射偏移」的隱性飄移核心假設——專門壓測 L4 分佈漂移與 RI 可信度退化。
+- **第三（drift 語意專測）：UCI Gas Sensor Array Drift（CC BY 4.0, DOI 10.24432/C5RP6W）。** 唯一「sensor/concept drift」本身就是 ground-truth 的開放集，跨 36 月 10 batches 的時間漂移結構，正對應「每變數在規格內但 X→Y 映射偏移」的隱性飄移核心假設——專門壓測 L4 分佈漂移與 L3 可信度（CP-band）退化。（RI 已被 Conformal Prediction 刻意取代，soft_sensor.py:1-6；呈現不得稱 RI。）
 
 > **推薦 cross-validation 組合：Extended TEP（錨點，多 mode 模擬）+ PRONTO/Cranfield TPFF（真實工廠 domain shift）+ Gas Sensor Array Drift（純 drift 語意壓測）。** 三者皆開放授權、無申請門檻，可立即落地。
 
@@ -96,6 +96,6 @@ flowchart LR
 ## 待確認
 
 > [!IMPORTANT] 待確認
-> 1. cross-validation 是否接受「生成器類」（pyTEP / BSM / CSTR ODE）自生帶標記 drift 案例，還是只採靜態已發布資料集？前者能精準造 re-entry 隱性飄移，後者 ground-truth 較中立。
+> 1. ~~（已解，2026-07）~~ 接受生成器/合成類：tep.generate() 已在用（covert drift＝注入刺激，明確標記非真實物理失效）；G1 ground truth 更裁決以合成儀器漂移 adapter 建構（TEP 的 Y=f(X) 結構上不可證 G1）。前者能精準造 re-entry 隱性飄移，後者 ground-truth 較中立。
 > 2. 是否啟動 SWaT/WADI 申請流程作為高維壓測後備（流程數日、限學術）？
 > 3. HSSED 蒸餾塔資料集是否值得投入時間追正式 DOI / supplementary 下載連結？

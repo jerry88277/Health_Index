@@ -1,6 +1,6 @@
 # 需求規格書 — Health_Index MVP
 
-> 版本 **v0.2**（納入自我審核 + 三方紅隊對帳修正）· 日期 2026-06-02
+> 版本 **v0.3**（對齊 2026-07 產品重定向；v0.2 為納入自我審核 + 三方紅隊對帳修正）· 日期 2026-07-03
 > 變更依據：`modernization_audit.md`、`redteam_reconciliation.md`（N1–N6 統計盲點、D1–D8 落地盲點、C1–C7 自審過度修正）
 > 配套：`functional_design.md`、`development_plan.md`、`avm_metrics_definitions.md`、`continuous_*`、`literature_crossref.md`
 > 規範：專案 `CLAUDE.md`（含「審核獨立性」）
@@ -12,7 +12,7 @@
 |---|---|
 | T²／SPE | PCA 兩哨兵：T²＝在已知正常關係內偏多遠；**SPE＝偏離正常關係結構多遠（隱性飄移主訊號）** |
 | GSI | 全空間 Mahalanobis 相似度，問「這筆 X 像不像歷史正常」——**免 Y 標籤** |
-| RI | AVM 可信度（兩模型預測分佈重疊面積）|
+| RI（已淘汰）| AVM 可信度（雙模型高斯重疊，Cheng 2008）——已被 split-CP/CP-band 刻意取代（soft_sensor.py:3-6），僅存為歷史術語 |
 | DQI_x | AVM 資料效度閘（PCA 特徵空間 Euclidean 距離）|
 | Conformal Prediction (CP) | 有覆蓋保證的預測區間；**split-CP 需有標籤 Y 的校準集** |
 | ICAD | 免標籤 conformal 異常 p-value，只需乾淨參考集 |
@@ -31,7 +31,9 @@
 取鄭芳田 AVM 精神，建**泛化工連續製程**的隱性飄移偵測：同產線 A→換 B/C 或維修→回 A 時，偵測 A 是否發生**隱性多變量飄移**（每變數在規格內、僅多變量關係或 X→Y 映射偏移），並以虛擬量測 Ŷ 取代破壞性抽樣。
 
 **In Scope（MVP）**：連續型資料；L1–L4＋Health Index 融合＋re-entry 觸發；連續製程前處理（穩態切段、transition/maintenance 閘、X→Y 對齊）；地端 FastAPI+Dash、原生 venv；跨資料集 cross-validation。
-**Out（後續）**：L5 批次 DTW；learned meta-model 融合；雲端/多租戶/登入；全自動線上重訓（MVP 僅手動＋凍結 golden-A）。
+**Out（後續）**：L5 批次 DTW 已入庫（`detectors/batch_dtw.py`，離線路徑；IndPenSim adapter 在庫），自 Out 移除；Out 保留：learned meta-model 融合、雲端/多租戶/登入、全自動線上重訓（MVP 僅手動＋凍結 golden-A）。
+
+> **v0.3 範圍註記**：產品核心已重定（2026-07-02 鎖定）＝多產線健康儀表板＋點線下鑽（即時記錄/告警歷史/模型資訊）＋告警歸因到 offending X/Y；三目標 G1（純 Y-vs-歷史、獨立於 X 之輕量 CUSUM/KS 模組）/G2（Y 漂移→X 歸因）/G3（Ŷ 越適用域→X 歸因），各以 SMTP 收尾（串接暫緩）；新增 batch-AVM X*=[param×stat] 路徑與 9 步精靈（現最優先）。權威：`docs/batch_avm_design.md`＋memory。
 
 ## 2. 利害關係人
 製程工程師（看 Health Index 時間軸＋肇因感測器）／資料科學家（可解釋、可驗證、可泛化）／C-level（能否以 Ŷ 取代抽樣）。
@@ -45,7 +47,7 @@
 | FR-3 | X→Y 延遲估計，稀疏延遲 Y 對齊回 X(t−d) | 前處理 | P1 |
 | FR-4 | L1：sanity check（NaN/凍結/超界）＋ **FastMCD 抗污染協方差**（固定 random_state）＋ DQI_x | L1 | P0 |
 | FR-5 | L2：golden-A 訓練 PCA→GSI(D²/p)/T²/SPE＋控制限；**控制限對自相關用 block-bootstrap/KDE**；診斷用 **RBC**（標註「單故障定位；多變量關係漂移為**定位非因果**、仍殘留 smearing」）；ISI 僅當「關係型 vs 顯性」輔助分類 | L2 | P0 |
-| FR-6 | L3：軟測量 **GPR** 預測 Ŷ；**可信度分兩路**——(a) 無標籤：GSI/SFA／**ICAD**（免標籤 conformal p-value）；(b) 有 lab-Y 累積足量後：**split-CP**（定最小 calibration 門檻）。**時序 CP(EnbPI/ACI) 不宣稱覆蓋保證**（re-entry 非穩態/無線上標籤破其前提）；RI 留相容對照 | L3 | P0 |
+| FR-6 | L3：軟測量 **GPR** 預測 Ŷ；**可信度分兩路**——(a) 無標籤：GSI/SFA／**ICAD**（免標籤 conformal p-value）；(b) 有 lab-Y 累積足量後：**split-CP**（定最小 calibration 門檻）；小 n（n<cp_min_calibration=200）走 CV+/jackknife+（`detectors/conformal_cv.py`，自有門檻 `cv_plus_min_obs`=20，獨立於 200；覆蓋誠實 worst-case ≥1−2α=0.80@α=0.1，非 ≥1−α；非抗漂移，只買小 n 可用性）。**時序 CP(EnbPI/ACI) 不宣稱覆蓋保證**（re-entry 非穩態/無線上標籤破其前提）；RI 已被 split-CP 刻意取代（`soft_sensor.py:3-6`：RI 為 ad-hoc 雙模型高斯重疊、無理論基礎），live code 無 RI；UI/報告一律稱 CP-band（可信度），不得稱 RI | L3 | P0 |
 | FR-7 | L4：**KS-on-PCA-score 廉價 1D first-pass → 觸發或需多維時升 MMD/MMDAgg**；量級用**解析 1D-Wasserstein**（Sinkhorn 留待真需多維 OT 幾何，ε 須 TEP 掃描）；PSI 僅供溝通不參與顯著性；**所有指標對 golden-A null 標準化後才跨段比較**；**block-permutation＋凍結模型**校準 | L4 | P1 |
 | FR-8 | Health Index：各分量先轉**對 golden-A null 的尾機率/標準化分數**再加權成 0–1；**單一融合分數為唯一告警決策點**（各 detector 當特徵不各自宣告）；re-entry 期重點監看 | 融合/觸發 | P0 |
 | FR-9 | REST API：選資料集/建凍結 baseline/執行分析/取 Health Index 時間軸/contribution/crossval | 後端 | P0 |
@@ -71,11 +73,12 @@
 | 角色 | 資料集 | 授權 |
 |---|---|---|
 | 錨點（多 mode 模擬）| Extended TEP (DOI 10.11583/DTU.13385936) + pyTEP (BSD-3) | CC BY 4.0 |
-| 真實工廠互補 | PRONTO/Cranfield TPFF (DOI 10.5281/zenodo.1341583) | CC BY 4.0 |
+| 真實工廠互補 | PRONTO/Cranfield TPFF (DOI 10.5281/zenodo.1341583)——**未落地**（見下註） | CC BY 4.0 |
 | 純 drift 壓測 | UCI Gas Sensor Array Drift (DOI 10.24432/C5RP6W) | CC BY 4.0 |
 
 - golden-A＝某穩態 mode 乾淨良品段（凍結）。
-- **主 ground-truth 由 pyTEP 生成**；但**正式採用門檻綁真實集（PRONTO/Gas）不退化**，避免「用合成 oracle 自證」的循環（紅隊 D2）。
+- 主 ground-truth 由 synthetic adapter＋`data/tep/` 12 個真實 MMFDD-TEP `.mat` 提供（`tep.generate()` 可跑，實測 300 列/22 感測器/稀疏 Y）；pyTEP 已棄用（需 MATLAB engine，見 `adapters/synthetic.py:3`）。covert drift＝注入刺激（9 個真實 IDV 無一「單變數盲/多變量抓」）；已實測 univ≈0.04、HI drift 0.55 vs clean 0.95。但**正式採用門檻綁真實集（PRONTO/Gas）不退化**，避免「用合成 oracle 自證」的循環（紅隊 D2）。
+- PRONTO 未落地（repo 無 adapter、無 data）；現行真實/半真實互補集＝CCPP、Steel、UCI Gas Drift（adapters/ 與 data/ 皆在庫），批次軌跡＝IndPenSim；AC-4「真實集不退化」現況見 `validation/crossval.py:99`（誠實列 backlog）。
 
 ## 6. 驗收判準 (AC)
 1. **AC-1** golden-A 期間 Health Index 低分。
@@ -90,9 +93,10 @@
 |---|---|
 | AVM-continuous 原生落地無前例（research gap）| 標原創組合，cross-validation 佐證 |
 | 線性假設、X→Y 延遲局部平穩 | MVP 接受；非線性/自適應列後續 |
-| golden-A 凍結 | 永久製程改變由人工＋DQI_y 觸發 re-baseline |
+| golden-A 凍結 | 永久製程改變由人工觸發 re-baseline；Y 側漂移訊號來自 G1 純 Y-vs-歷史輕量模組（CUSUM/KS on raw Y）與殘差 EWMA/CUSUM（batch_avm_design.md §7），非 DQI_y——DQIy 裁決＝逐筆品質准入閘、非漂移偵測（ART2 已砍） |
 | **少量點檢定力下限**（硬限制）| MMD/Sinkhorn/CP 不能「5 筆抓 0.2σ」；地端冷啟動受**資料累積時間**約束，非演算法可解 |
 | **時序 CP 保證前提**在 re-entry 失效 | 不宣稱保證，僅批次校準 |
 
 ## 變更紀錄
 - v0.2：納入三方紅隊修正——FR-5(RBC caveat)、FR-6(GSI/ICAD/CP 分路)、FR-7(KS first-pass/1D-Wasserstein/標準化/block-permutation)、FR-8(單一決策點)、FR-13(降級)、NFR-1/2/4/8/9(seed+容忍帶/FWER/節拍/超參治理)、AC-2/4/6(power curve/真實集/type-I)。
+- v0.3（2026-07-03）：對齊 2026-07 產品重定向（多產線儀表板／G1-G3／batch-AVM 9 步精靈），修正 stale 事實（pyTEP/PRONTO/RI/CV+ 等）。

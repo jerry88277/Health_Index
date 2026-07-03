@@ -2,6 +2,7 @@
 
 > 對象：懂連續/批次製程、看得懂單變數管制圖（SPC）、但不熟統計/機器學習的工程師。
 > 原則：每個術語第一次出現都用製程情境比喻解釋；本文**只根據 repo 內程式碼**撰寫，不憑記憶。
+> 範圍註記（2026-07）：本文涵蓋既有 raw-X 五維判斷鏈（維持不動）。新增的可加性 batch-AVM 路徑（每批 X*=[param×stat] 特徵、`preprocess/batch_features.py`、CV+/jackknife+ 小 n 可信帶、取代現行 5 步精靈的 9 步 Golden 精靈）見 `docs/batch_avm_design.md`，本文尚未涵蓋。
 > 文獻一律以 `docs/literature_crossref.md` 為準；查不到的就標「(文獻待查)」，不捏造。
 
 ---
@@ -144,7 +145,7 @@ $e_j$ 是第 j 支表的殘差，$\tilde{C}_{jj}$ 是殘差投影矩陣的對角
 
   其中 $k = \lceil (n+1)(1-\alpha) \rceil$（`soft_sensor.py:95`）。
 
-- **可信帶不可用時的退路（誠實標）**：校準樣本不足（< `cp_min_calibration = 200`），或 α 太小導致需要無限寬區間時，CP **不啟用**（`cp_available=False`），上層改用 L1 的 GSI/域相似度當可信度依據（`soft_sensor.py:79` docstring）。系統寧可說「這次無法給保證」也不靜默近似。
+- **可信帶不可用時的退路（誠實標）**：校準樣本不足（< `cp_min_calibration = 200`），或 α 太小導致需要無限寬區間時，split-CP **不啟用**（`cp_available=False`），上層改用 L1 的 GSI/域相似度當可信度依據（`soft_sensor.py:79` docstring）。系統寧可說「這次無法給保證」也不靜默近似。小 n 情境另有 CV+/jackknife+（`detectors/conformal_cv.py::CVPlusConformal`）：自有門檻 `cv_plus_min_obs=20`（獨立於 200），覆蓋保證為誠實 worst-case ≥1−2α（0.80@α=0.1、非 ≥1−α），供 batch-AVM 小 n golden 路徑使用；SoftSensor/PLSSoftSensor 的 split-CP 契約不變。
 
 - **map_health（X→Y 關係還成不成立）**（`y_health.py:73`）：把窗內有量到的實際 Y 跟軟測量 Ŷ 比，看殘差**有沒有超出可信帶**。帶內＝關係正常（健康=1）；超帶越多、健康越低（exp 衰減）。
 
@@ -329,7 +330,9 @@ flowchart TD
 | `pca_var_explained` | 0.90 | PCA 保留到累積 90% 變異 | §3 前置 |
 | `mspc_alpha` | 0.01 | T²/SPE 控制限取 golden 99% 分位（100 次容 1 次） | §3.1/3.2 |
 | `cp_alpha` | 0.10 | 軟測量可信帶目標覆蓋 90% | §3.5 |
-| `cp_min_calibration` | 200 | CP 上線最少校準樣本，不足退 GSI | §3.5 |
+| `cp_min_calibration` | 200 | split-CP 上線最少校準樣本，不足退 GSI | §3.5 |
+| `cv_plus_folds` | 5 | CV+ 折數 K（n_folds≥n → jackknife+） | §3.5 |
+| `cv_plus_min_obs` | 20 | CV+ 上線最小觀測數（獨立於 200 門檻） | §3.5 |
 | `y_map_min_obs` | 5 | map_health 最少 Y 觀測，不足回 None | §5.2 |
 | `y_flag_threshold` | 0.5 | 任一 Y 分量低於此就亮旗 | §5.2 |
 | `y_trend_z_max` | 3.0 | Ŷ 水準漂移超 3σ 標旗 | §5.2 |

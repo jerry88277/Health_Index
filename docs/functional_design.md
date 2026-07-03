@@ -1,6 +1,6 @@
 # 功能設計 — Health_Index MVP
 
-> 版本 **v0.2**（納入三方紅隊修正）· 日期 2026-06-02
+> 版本 **v0.3**（對齊 2026-07 產品重定向）· 日期 2026-07-03
 > 上游：`requirements_spec.md` v0.2；修正依據：`redteam_reconciliation.md`
 
 ---
@@ -18,11 +18,13 @@ flowchart LR
         PIPE[pipeline] --> DET[L1–L4 + 融合]
         ADP[adapters]
     end
-    DATA[(Extended TEP / PRONTO / Gas Drift)]
+    DATA[(synthetic / TEP MMFDD .mat ×12 / CCPP / Steel / UCI Gas Drift / IndPenSim)]
     UI -->|HTTP| API --> PIPE --> DET
     PIPE --> ADP --> DATA
     DET --> API --> UI
 ```
+> **產品核心（north star，2026-07-02 鎖定）**：多產線健康總覽 → 點產線下鑽（線上即時記錄／告警歷史／模型建立資訊）→ 告警展開歸因到 offending X 參數或 Y 量測。現行 demo 5 步精靈（`deploy/demo.py`）將被 9 步 batch-AVM 精靈取代（權威：`batch_avm_design.md` ＋ golden-wizard 設計）。
+
 偵測核心是純函式庫，可不經 HTTP 被 pytest / cross-validation 呼叫。
 
 ## 2. 套件結構
@@ -30,15 +32,21 @@ flowchart LR
 src/health_index/
 ├── interface.py        # 統一契約（雙軌：穩態 pseudo-run + 逐時刻 lagged）— 骨架穩定
 ├── config.py           # 單一 config：所有超參(lag/penalty/bandwidth/ε/α/B/seed) + TEP 掃描預設
-├── adapters/           # tep / pronto / gas_drift
+├── adapters/           # base / registry / synthetic / tep / ccpp / steel / uci_gas_drift / indpensim / dataframe（無 pronto；pyTEP 棄用見 synthetic.py:3）
 ├── preprocess/         # ruptures 切段 + 穩態 gate / transition·maintenance / X→Y 對齊
+│   └── {features.py, batch_features.py}  # batch_features＝INC-1 疊圖+[param×stat] X*、隔離於主 HealthIndex
 ├── detectors/
 │   ├── dqi_x.py        # L1 sanity + FastMCD + DQI_x
 │   ├── mspc.py         # L2 PCA→GSI/T²/SPE + RBC + block-bootstrap 控制限
 │   ├── soft_sensor.py  # L3 GPR + 可信度(GSI/SFA/ICAD/split-CP)
-│   └── drift.py        # L4 KS→MMD 分層 + 1D-Wasserstein + PSI + block-permutation
+│   ├── drift.py        # L4 KS→MMD 分層 + 1D-Wasserstein + PSI + block-permutation
+│   ├── conformal_cv.py # CV+/jackknife+ 小 n 可信度（TDD-0）
+│   ├── highdim.py      # PCA-score 預投影
+│   └── batch_dtw.py    # L5
 ├── health.py           # 融合(對null標準化→加權)+ 單一決策點 + FWER + re-entry 觸發
-├── fallback.py         # 降級階梯
+├── y_health.py         # Y 側健康融合
+│                       #（降級階梯分散實作於 health.py / soft_sensor.py / drift 各層與 api/server.py，無獨立 fallback 模組）
+├── deploy/             # 含 demo.py 5 步精靈（將被 9 步精靈取代）
 ├── validation/crossval.py
 └── api/{server.py,schemas.py}
 frontend/app.py
@@ -49,6 +57,8 @@ tests/                  # 編碼 WHY；RNG 測試鎖 seed + 容忍帶
 原始欄（adapter 提供）：`timestamp` / `x_<sensor>` / `grade_label` / `y_value`(多 NaN) / `y_timestamp`。
 衍生欄（pipeline 算）：`campaign_id` / `mode`{steady,transition,maintenance} / `run_id` / `is_golden_a` / `y_delay`。
 設定（不入列，TEP 掃描定值）：`x_lag_order` / `ssd_penalty` / `mmd_bandwidth` / `sinkhorn_eps` / `cp_alpha` / `perm_B` / `random_state`。
+
+> **已裁決契約擴充**：`machine_id` 將以 RESERVED 欄加入 `interface.py`（Option A，使用者確認）——僅 provenance/選取、非偵測器輸入、additive 向後相容（`batch_avm_design.md` §2）；截至目前尚未實作（TDD-7~10 待建）。
 
 ## 4. 處理管線
 ```mermaid
@@ -75,8 +85,13 @@ flowchart TD
 | POST | /timeline | 逐樣本 T²/SPE/GSI + 控制限 + campaign 邊界 | ✅ B1 |
 | POST | /contribution | per-campaign RBC 肇因 [{variable,rbc,spc_exceedance}] | ✅ B1 |
 | POST | /crossval | 跨資料集驗證（含真實集不退化檢核）| ⏳ B2 |
+| POST | /softsensor | L3 軟測量：GPR 以 golden (X→Y) 訓練，逐樣本 Ŷ + 可信帶 + 實際 Y | ✅ 已在庫 |
+| POST | /fwer | AC-6 單一決策點：per-campaign `fwer_alarm`（Holm 校正 L1/L2/L4）| ✅ 已在庫 |
+| POST | /yhealth | Y 分布健康（Y-MSPC：T²/SPE on 多維品質 Y）| ✅ 已在庫 |
+| POST | /yhealth_index | 統一 Y 健康指標：映射健康 ⊕ 分布健康 → 單一 0–1 | ✅ 已在庫 |
+| POST | /series | 逐樣本原始參數時序 + golden-A 單變數 3σ 管制線（SPC 視圖）| ✅ 已在庫 |
 
-> **命名偏離（B1，Rule 12）**：原訂 `GET /analyze/{job}/health`、`/analyze/{job}/contribution` 為有狀態（job store）。MVP 採**無狀態**（請求帶 seed/drift 重算、無 job 持久層），故實作為無路徑段的 `POST /timeline`、`POST /contribution`；待引入 job store 時再回 RESTful 子資源路徑。Ŷ vs Y 軟測量時間軸欄位仍待 L3 端點（M-later）。
+> **命名偏離（B1，Rule 12）**：原訂 `GET /analyze/{job}/health`、`/analyze/{job}/contribution` 為有狀態（job store）。MVP 採**無狀態**（請求帶 seed/drift 重算、無 job 持久層），故實作為無路徑段的 `POST /timeline`、`POST /contribution`；待引入 job store 時再回 RESTful 子資源路徑。L3 端點已建：`POST /softsensor`（`api/server.py:183`），Ŷ vs Y 軟測量時間軸由其提供。
 
 ## 6. L4 漂移偵測（重新設計，紅隊重點）
 ```
@@ -98,10 +113,11 @@ flowchart TD
 ## 8. 可信度設計（紅隊 H1/C3）
 | 情境 | 可信度來源 |
 |---|---|
-| 無標籤（多數時刻）| GSI/SFA 輸入域相似度 ＋ **ICAD**（免標籤 conformal p-value）|
+| 無標籤（多數時刻）| GSI 輸入域相似度 ＋ ICAD（免標籤 conformal p-value）；SFA 未實作（維持 P2 候選）|
 | 有 lab-Y 且累積 ≥ 最小 calibration 門檻 | **split-CP** 預測區間 |
 | 時序漂移 | **不宣稱 EnbPI/ACI 覆蓋保證**（re-entry 破前提）；僅批次校準 |
-| 相容對照 | 保留 RI |
+| ~~相容對照~~ 已淘汰 | RI 已移除——CP 刻意取代（`soft_sensor.py:3-6`），live code 無 RI，不得稱 RI |
+| 小 n（n<200）| CV+/jackknife+（`conformal_cv.py`，自有門檻 `cv_plus_min_obs`、誠實覆蓋 ≥1−2α）|
 
 ## 9. 降級階梯（FR-13）
 CP→GSI／MMD→KS／Sinkhorn→1D-Wasserstein／FastMCD 失敗→sample cov+警示；UI 標「降級模式」。
@@ -114,3 +130,4 @@ L1–L4 公式以 `avm_metrics_definitions.md` 為準（GSI=D²/p、T²/SPE、RB
 
 ## 變更紀錄
 - v0.2：L4 重設計（KS first-pass/1D-Wasserstein/標準化/block-permutation）、融合單一決策點+FWER、凍結模型原則、可信度雙路(GSI/ICAD/CP)、降級階梯、config 單一超參治理、RBC caveat 上 UI。
+- v0.3（2026-07-03）：對齊 2026-07 產品重定向（多產線儀表板／G1-G3／batch-AVM 9 步精靈），修正 stale 事實（pyTEP/PRONTO/RI/CV+ 等）。

@@ -40,7 +40,7 @@ $$DQI_x = \sqrt{\sum_{j=1}^{k}\left(a_j - \bar{a}_j\right)^2}$$
 ## 3. DQI_y（量測值品質指標）
 
 來源：US8095484B2 Eq.36。以 **ART2** 將歷史量測分成 m 個 pattern，pattern $P_q$ 內以 **normalized variability (NV)** 定義 $DQI_{y_j}$；門檻 $DQI_{y,T}=Z_{score}(y_t)$，$y_t$＝最大可容忍量測值。$DQI_{y_j}>DQI_{y,T}$ 即判量測異常。
-- 角色：只在**拿到實體 Y 要更新/校正模型**時把關標籤品質（本專案的模型更新路徑，非每筆 run）。
+- 角色（專利原文脈絡）：拿到實體 Y 更新/校正模型時把關標籤品質。⚠ 本專案 2026-07-02 裁決**不採用** ART2 DQIy（准入閘非漂移偵測、線上原型學習吸收慢漂移，batch_avm_design.md §7）；定義保留作專利存檔參照。
 
 ## 4. RI（Reliance Index）
 
@@ -49,7 +49,7 @@ $$DQI_x = \sqrt{\sum_{j=1}^{k}\left(a_j - \bar{a}_j\right)^2}$$
 $$RI = 2\int_{(Z_{\hat y_{N_i}}+Z_{\hat y_{r_i}})/2}^{\infty}\frac{1}{\sqrt{2\pi}\,\sigma}\,e^{-\frac{1}{2}\left(\frac{x-\mu}{\sigma}\right)^2}dx$$
 
 - RI∈[0,1]，越接近 1 越可信；低於 $RI_T$ 則拒絕該次 VM、轉要求實體抽樣。
-- **化工映射**：NN vs MR 雙模型 → 可用兩個獨立 soft sensor（如 PLS vs GPR）或 GPR 預測區間替代「重疊面積」語義。
+- **化工映射（已定案，取代本註）**：本專案不重現雙模型重疊——L3 可信度採 split-CP（soft_sensor.py），小 n 用 CV+/jackknife+（conformal_cv.py，覆蓋 ≥1−2α）；RI 為 ad-hoc、無 distribution-free 保證，僅存檔。
 
 ## 5. T² / SPE（本專案 L2 增強，MSPC 標準）
 
@@ -67,8 +67,8 @@ $$T^2=\sum_{i=1}^{k}\frac{t_i^2}{\lambda_i}\qquad SPE=\lVert(I-P_kP_k^\top)\math
 |---|---|---|---|
 | L1 資料效度閘 | 原始 sanity check + DQI_x | 本專案 + US8095484B2 | sanity check 為 AVM 所無，需自加 |
 | L2 多變量域 | **GSI=D²/p**＋T²＋**SPE** | US8095484B2 + MSPC | SPE 為 AVM 原生所無的補強 |
-| L3 軟測量可信度 | Ŷ + RI（雙模型重疊 or GPR 區間） | US7593912B2 Eq.4 | 化工以 PLS/GPR 替代 NN/MR |
-| 模型更新把關 | DQI_y | US8095484B2 Eq.36 | 僅拿到實體 Y 時啟用 |
+| L3 軟測量可信度 | Ŷ + Conformal Prediction 區間（split-CP；小 n 用 CV+/jackknife+，覆蓋誠實 ≥1−2α） | CP 取代 RI（soft_sensor.py:1-6；conformal_cv.py） | RI 已被 CP 刻意取代，呈現一律稱「可信度(CP-band)」、不得稱 RI；RI 定義（US7593912B2 Eq.4）僅存檔於 §4 |
+| 模型更新把關 | ~~DQI_y~~（2026-07-02 裁決砍除 ART2 DQIy，不實作；見 batch_avm_design.md §7/§9） | US8095484B2 Eq.36（定義存檔） | 隱性 Y 漂移改由殘差 EWMA/CUSUM + change-point + L4 Wasserstein/KL 承擔；G1 純 Y-vs-歷史另用獨立輕量 CUSUM/KS 模組 |
 
 ## 來源
 - US7593912B2 — Method for evaluating reliance level of a VM system（GSI Eq.25 無 1/p；RI Eq.4）: https://patents.google.com/patent/US7593912B2/en
