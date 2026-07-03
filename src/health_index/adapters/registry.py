@@ -71,6 +71,11 @@ def _build_synthetic_pgn(
     )
 
 
+def _build_tep_fleet(**kw) -> tuple[ProcessDataset, GroundTruth]:
+    """多機台 fleet（同產品×不同機台×不同時間，machine_id=provenance）——batch-AVM 選取/池化護欄用。"""
+    return _wrap_campaign_like(*tep.generate_fleet(**kw))
+
+
 def _build_uci_gas_drift(**kw) -> tuple[ProcessDataset, GroundTruth]:
     ds, gt = uci_gas_drift.load(**kw)
     return ds, GroundTruth(
@@ -129,6 +134,7 @@ _BUILDERS: dict[str, DatasetBuilder] = {
     "synthetic_pgn": _build_synthetic_pgn,  # 桶3b：p≫n，使 benchmark 涵蓋桶3 高維路徑
     "tep": _build_tep,
     "tep_tp": _build_tep_tp,
+    "tep_fleet": _build_tep_fleet,            # 多機台 fleet（machine_id provenance；batch-AVM 選取用）
     "uci_gas_drift": _build_uci_gas_drift,
     "ccpp": _build_ccpp,                      # 真實非化工含 Y（發電廠，shuffle 無時序，drift_mask=None）
     "ccpp_covert": _build_ccpp_covert,        # CCPP + 半合成隱性漂移（早於單變數 SPC）

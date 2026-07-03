@@ -43,10 +43,13 @@ MODE = "mode"
 RUN_ID = "run_id"
 IS_GOLDEN_A = "is_golden_a"
 Y_DELAY = "y_delay"
+# 選用原始欄（provenance；adapter 可提供、非必要——舊資料集不帶照樣過契約，向後相容）
+MACHINE_ID = "machine_id"  # 產出源頭標記（機台/產線），僅供選取/溯源；**非偵測器輸入**
+#   （2026-07-02 使用者裁決 Option A：入 RESERVED 防未來 adapter 把機台身分當 X 感測器餵偵測器）
 
 RAW_REQUIRED: tuple[str, ...] = (TIMESTAMP, GRADE_LABEL, Y_VALUE, Y_TIMESTAMP)
 DERIVED: tuple[str, ...] = (CAMPAIGN_ID, MODE, RUN_ID, IS_GOLDEN_A, Y_DELAY)
-RESERVED: tuple[str, ...] = RAW_REQUIRED + DERIVED
+RESERVED: tuple[str, ...] = RAW_REQUIRED + DERIVED + (MACHINE_ID,)
 
 
 class ContractError(ValueError):

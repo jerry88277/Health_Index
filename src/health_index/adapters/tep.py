@@ -54,7 +54,7 @@ import numpy as np
 import pandas as pd
 import scipy.io
 
-from ..interface import GRADE_LABEL, TIMESTAMP, Y_TIMESTAMP, Y_VALUE, ProcessDataset
+from ..interface import GRADE_LABEL, MACHINE_ID, TIMESTAMP, Y_TIMESTAMP, Y_VALUE, ProcessDataset
 
 DEFAULT_DIR = os.path.join("data", "tep")
 XMEAS_COLS = list(range(0, 22))   # XMEAS1-22 製程感測器 = X
@@ -224,3 +224,88 @@ def generate(
         x_columns=x_columns,
     )
     return ProcessDataset(frame=frame, x_columns=x_columns, name="tep"), gt
+
+
+_DEFAULT_FLEET: tuple = (
+    {"id": "A", "seed": 0, "offset_sigma": 0.0, "start": "2026-03-01"},
+    {"id": "B", "seed": 1, "offset_sigma": 0.5, "start": "2026-04-01"},
+)
+
+
+def generate_fleet(
+    *,
+    machines=_DEFAULT_FLEET,
+    n_per_campaign: int = 300,
+    drift_strength: float = 0.7,
+    y_every: int = 20,
+    data_dir: str = DEFAULT_DIR,
+    time_preserving: bool = False,
+) -> tuple[ProcessDataset, TEPGroundTruth]:
+    """多機台 fleet 情境（M-2）：同產品×不同機台×不同時間，供 batch-AVM 多機台選取/池化護欄。
+
+    TEP 原生**無機台**概念——每機台以 ``generate(seed=該機台 seed)`` 各生一份 5-campaign 情境，
+    再施加**每機台系統偏移**（``offset_sigma``：X 各欄 += offset_sigma × 該機台 golden 欄標準差，
+    語意＝X 側儀器/機台偏差，**Y 不動**）與**各自起始日期**（``start``），最後打上
+    ``machine_id``（僅 provenance，非偵測器輸入）串接為單一 ProcessDataset。
+    這正是池化同質性護欄要暴露的異質情境（offset_sigma>0 的機台混入 Golden 會撐寬基準）。
+
+    Args:
+        machines: 每機台 dict：``id``（必要、不可重複）、``seed``（預設 0）、
+            ``offset_sigma``（預設 0）、``start``（預設 2026-01-01）。
+        其餘參數同 ``generate``（每機台各自套用）。
+
+    Raises:
+        ValueError: machines 為空或 id 重複（fail loud，比照 registry 慣例）。
+        FileNotFoundError: 缺 .mat（同 ``generate``）。
+
+    Invariant: 同參數 → 逐位元相同輸出；原 ``generate`` 完全不動（向後相容）。
+    """
+    machines = tuple(machines)
+    if not machines:
+        raise ValueError("machines 不可為空")
+    ids = [m["id"] for m in machines]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"machines id 重複：{ids}")
+    frames = []
+    bounds_all: list[tuple[int, int, str]] = []
+    gmasks = []
+    dmasks = []
+    x_columns: tuple = ()
+    cursor = 0
+    for m in machines:
+        ds, gt = generate(
+            n_per_campaign=n_per_campaign,
+            drift_strength=drift_strength,
+            y_every=y_every,
+            seed=int(m.get("seed", 0)),
+            data_dir=data_dir,
+            time_preserving=time_preserving,
+        )
+        fr = ds.frame.copy()
+        x_columns = ds.x_columns
+        n = len(fr)
+        off = float(m.get("offset_sigma", 0.0))
+        if off:
+            xg = fr.loc[gt.golden_mask, list(x_columns)].to_numpy(dtype=float)
+            sd = xg.std(axis=0) + 1e-9
+            fr.loc[:, list(x_columns)] = fr[list(x_columns)].to_numpy(dtype=float) + off * sd
+        ts = pd.date_range(str(m.get("start", "2026-01-01")), periods=n, freq="min")
+        fr[TIMESTAMP] = ts
+        obs_idx = np.flatnonzero(fr[Y_VALUE].notna().to_numpy())
+        yts = pd.Series(pd.NaT, index=fr.index, dtype="datetime64[ns]")
+        yts.iloc[obs_idx] = ts[obs_idx]
+        fr[Y_TIMESTAMP] = yts.to_numpy()
+        fr[MACHINE_ID] = m["id"]
+        frames.append(fr)
+        bounds_all.extend((s + cursor, e + cursor, g) for s, e, g in gt.campaign_bounds)
+        gmasks.append(gt.golden_mask)
+        dmasks.append(gt.drift_mask)
+        cursor += n
+    frame = pd.concat(frames, ignore_index=True)
+    gt_all = TEPGroundTruth(
+        campaign_bounds=tuple(bounds_all),
+        golden_mask=np.concatenate(gmasks),
+        drift_mask=np.concatenate(dmasks),
+        x_columns=x_columns,
+    )
+    return ProcessDataset(frame=frame, x_columns=x_columns, name="tep_fleet"), gt_all
