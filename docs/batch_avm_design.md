@@ -62,9 +62,9 @@
 
 ## 11. NOT VERIFIED / crossref TODO（Rule 12）
 - **Barber, Candès, Ramdas & Tibshirani 2021「Predictive inference with the jackknife+」**（Ann. Statist. 49(1):486–507）：CV+/jackknife+ 的 ≥1−2α 底線來源——**不在 crossref**，須 VERIFY 後方可作已驗證引用。
-- ⚠ **DQIy DOI 衝突**：網路查得 `10.1109/TSM.2011.2154910` vs crossref 現有 `10.1109/TSM.2011.2146006`（同一篇 Huang & Cheng 2011）——**必有一錯**，上 IEEE Xplore 核對修正。
+- **DQIy DOI（已解，前述衝突為 stale）**：crossref `:26/27` 已統一為 `10.1109/TSM.2011.2146006`、狀態 VERIFIED、附 IEEE 連結，為權威。網路調查曾出現 `10.1109/TSM.2011.2154910`——與 VERIFIED 條目衝突，值得再確認一次，但不推翻 crossref。
 - EWMA/CUSUM ARL（~10 vs ~44 子組）來自 JMP portal，非原始文獻；ART2 正典（Carpenter & Grossberg 1987, Applied Optics 26:4919-4930）；Kadlec 2011/2009、Kaneko&Funatsu TD、conformal martingale（J. Process Control 2025 DOI 尾碼 placeholder）——全待 VERIFY。
-- 「殘差 EWMA/CUSUM / GSI-T²-SPE on X* 在 TEP 上早於單變數 SPC 抓隱性漂移」= 推理，**未實測**（無 TEP .mat ground-truth）。
+- **TEP 資料實地校正（更正先前「無 .mat」誤述）**：`data/tep/` 有 12 個真實 MMFDD-TEP `.mat`，`tep.generate()` 本環境可跑（實測 300 列/22 感測器/稀疏 Y）。**既有五維鏈**對「注入型」隱性飄移（打亂高相關 XMEAS 時序、保邊際破相關）已**實測**：單變數 univ≈0.04（盲）、HI drift 0.55 vs 乾淨 0.95（見 `adapters/tep.py` docstring）。誠實限制：9 個**真實 IDV 故障無一**重現「單變數盲/多變量抓」（故 covert drift＝注入刺激、明確標記非真實物理失效）。**尚未實測**：**新** batch-AVM 路徑（X\*=[param×stat]、殘差 EWMA/CUSUM、多機台 fleet）在 TEP 上的表現——因該路徑尚未建（非資料限制；資料在，建好即可測）。
 
 ## 12. 待建基礎建設
 - Gate2「%進度轉換」= 淨新增（專案 code 無 background/long_callback）→ **dcc.Interval 輪詢 + job-state store**（使用者選輕量版）；同步回呼算 80 張會凍住 Dash worker，禁用。
