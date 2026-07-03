@@ -57,7 +57,7 @@
 2b. **[x] INC-2 建模前資料品質視圖**：`batch_avm/quality.py::batch_quality_view`——X 側 fresh DQIxGate on X*（不碰 live L1）＋批長 n 一致性閘；Y 側**確定性准入閘**（存在性/robust 界限 median±k·MAD/卡值 run）取代已砍 ART2 DQIy；「Y 未量測」≠「Y 正常」明確分離；`y_enough_for_mapping` 綁 cv_plus_min_obs。12 測試綠、全套 463 passed。
 3. [ ] TDD-4 n 一致性/長度測試 → min/max/range + n-guard + fixed-p fallback；極值→DQIx sensor-health。
 4. [ ] TDD-殘差 Y 漂移監控（EWMA/CUSUM on e=y−ŷ，自相關感知、不差分）。
-5. [ ] TDD-5/6 X*→Ŷ（PLS 主力）、X* MSPC（fresh+highdim）。
+5. **[x] TDD-5/6（INC-3）X*→Ŷ + X* MSPC**：`batch_avm/mapping.py`——`fit_batch_model`（make_soft_sensor 路由 PLS 主力 + CVPlusConformal 可信帶）＋fresh `MSPCModel` on X*（highdim 預投影，reduced_/degraded_ 誠實 surface）；`score_batches`（yhat/CV+ 帶/T²/SPE/GSI/域旗標/RBC top——**僅未降維時歸因**，降維誠實 None）。8 WHY 測試綠、全套 471 passed。
 6. [ ] TDD-7~10 CV harness（新模組，非 crossval.py）、skeleton（machine_id→RESERVED/config）、generate_fleet、同質性閘。
 7. [ ] TDD-11 DQIy=DROP ART2、DQIx-only。
 8. [ ] 非 code：Barber crossref VERIFY + DQIy DOI 衝突修正 + Gate2 紅線/step-9 改字 + dcc.Interval 進度基建。
