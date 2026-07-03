@@ -70,4 +70,4 @@
 - **TEP 資料實地校正（更正先前「無 .mat」誤述）**：`data/tep/` 有 12 個真實 MMFDD-TEP `.mat`，`tep.generate()` 本環境可跑（實測 300 列/22 感測器/稀疏 Y）。**既有五維鏈**對「注入型」隱性飄移（打亂高相關 XMEAS 時序、保邊際破相關）已**實測**：單變數 univ≈0.04（盲）、HI drift 0.55 vs 乾淨 0.95（見 `adapters/tep.py` docstring）。誠實限制：9 個**真實 IDV 故障無一**重現「單變數盲/多變量抓」（故 covert drift＝注入刺激、明確標記非真實物理失效）。**尚未實測**：**新** batch-AVM 路徑（X\*=[param×stat]、殘差 EWMA/CUSUM、多機台 fleet）在 TEP 上的表現——X*=[param×stat] 轉換核心已建（`preprocess/batch_features.py`，INC-1）；映射模型／X* MSPC／殘差監控／fleet 尚未建，端到端仍未在 TEP 實測（非資料限制；資料在，建好即可測）。
 
 ## 12. 待建基礎建設
-- Gate2「%進度轉換」= 淨新增（專案 code 無 background/long_callback）→ **dcc.Interval 輪詢 + job-state store**（使用者選輕量版）；同步回呼算 80 張會凍住 Dash worker，禁用。
+- **[x]（INC-5）** Gate2「%進度轉換」已落地：`frontend/batch_wizard.py` thread + `dcc.Interval` 輪詢 + 模組級 job-state（token 入 dcc.Store）；9 步精靈掛入 demo_app `scr-batchwiz`（與 5 步精靈並存，驗證後汰換）。callback 皆薄殼包純函數（tests/test_batch_wizard.py）；UI 視覺未渲染驗證（NOT VERIFIED-visual，比照 demo_app 慣例）。
