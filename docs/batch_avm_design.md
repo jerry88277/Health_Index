@@ -53,7 +53,8 @@
 ## 10. TDD 順序與狀態
 1. **[x] TDD-0 CP 小 n**：`conformal_cv.py` CV+/jackknife+（自有門檻、誠實 ≥1−2α）；6 測試綠、全套 445 passed。
 1b. **[x] INC-1 批次疊圖 + [param×stat] 指標轉換**：`preprocess/batch_features.py`（batch_temporal_overlay／batch_indicator_matrix；resample 僅畫圖層、count 原生格餵 DQIx、cv |mean| floor）；6 WHY 測試綠、全套 451 passed（5052b8a，2026-07-03）。
-2. [ ] TDD-3 結構隔離測試（batch-AVM 不回主 HealthIndex）。
+2. **[x] TDD-3 結構隔離測試**：`tests/test_batch_avm_isolation.py`——主路徑（score_timeline/window_detail/health.py）原始碼＋子行程 import graph 雙重鎖 batch-AVM token；batch_features/conformal_cv 以 AST 驗 import 純度（不誤傷 docstring 散文）。
+2b. **[x] INC-2 建模前資料品質視圖**：`batch_avm/quality.py::batch_quality_view`——X 側 fresh DQIxGate on X*（不碰 live L1）＋批長 n 一致性閘；Y 側**確定性准入閘**（存在性/robust 界限 median±k·MAD/卡值 run）取代已砍 ART2 DQIy；「Y 未量測」≠「Y 正常」明確分離；`y_enough_for_mapping` 綁 cv_plus_min_obs。12 測試綠、全套 463 passed。
 3. [ ] TDD-4 n 一致性/長度測試 → min/max/range + n-guard + fixed-p fallback；極值→DQIx sensor-health。
 4. [ ] TDD-殘差 Y 漂移監控（EWMA/CUSUM on e=y−ŷ，自相關感知、不差分）。
 5. [ ] TDD-5/6 X*→Ŷ（PLS 主力）、X* MSPC（fresh+highdim）。
