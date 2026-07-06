@@ -23,6 +23,7 @@ from ..detectors.conformal_cv import CVPlusConformal
 from ..detectors.highdim import effective_rank, reduction_plan
 from ..detectors.mspc import MSPCModel
 from ..detectors.soft_sensor import make_soft_sensor
+from .homogeneity import golden_homogeneity_gate
 
 
 @dataclass
@@ -45,6 +46,7 @@ class BatchAvmModel:
     red_mean_: object = None      # 預投影用標準化（僅 reduced_ 時）
     red_std_: object = None
     reduce_V_: object = None      # (p_kept, r) 投影矩陣；None＝未降維
+    homogeneity_: object = None   # 池化 Golden 同質性閘結果（fit 給 cells 時；設計 §8，WARN-only）
 
     def _kept(self, Xstar: np.ndarray) -> np.ndarray:
         X = np.asarray(Xstar, dtype=float)
@@ -57,13 +59,16 @@ class BatchAvmModel:
         return ((Xk - self.red_mean_) / self.red_std_) @ self.reduce_V_
 
 
-def fit_batch_model(Xstar, y, *, columns=None, config: Config = DEFAULT) -> BatchAvmModel:
+def fit_batch_model(Xstar, y, *, columns=None, cells=None, config: Config = DEFAULT) -> BatchAvmModel:
     """以 golden 批的 (X*, y) 建映射模型 + CV+ 可信帶 + fresh X* MSPC（全部凍結）。
 
     Args:
         Xstar: (n_batches, p) 每批 [param×stat] 特徵（`batch_indicator_matrix` 數值欄）。
         y: (n_batches,) 每批量測（未量測 NaN；映射/CV+ 只用有限列）。
         columns: 欄名（RBC 歸因命名用）；None → f0..f{p-1}。
+        cells: (n_batches,) 每批的 cell 標籤（如 machine_id）——給了就於 **build 時**跑池化
+            同質性閘（設計 §8，WARN-only，結果存 ``homogeneity_`` 並進 score summary）；
+            None＝不評（誠實 None，不偽造）。
         config: 全域超參。
 
     Raises:
@@ -132,6 +137,9 @@ def fit_batch_model(Xstar, y, *, columns=None, config: Config = DEFAULT) -> Batc
     m.red_mean_ = mean if need_reduce else None
     m.red_std_ = std if need_reduce else None
     m.reduce_V_ = V
+    if cells is not None:
+        kept_cols = [cols[i] for i in kept_idx]
+        m.homogeneity_ = golden_homogeneity_gate(Xk, cells, columns=kept_cols, config=config)
     return m
 
 
@@ -190,5 +198,6 @@ def score_batches(model: BatchAvmModel, Xstar) -> dict:
         "degraded": bool(model.degraded_),
         "dropped_columns": list(model.dropped_columns),
         "n_golden": int(model.n_golden_),
+        "homogeneity": model.homogeneity_,  # 池化同質性閘（None＝fit 未給 cells，不評不偽造）
     }
     return {"batches": batches, "summary": summary, "is_advisory": True}

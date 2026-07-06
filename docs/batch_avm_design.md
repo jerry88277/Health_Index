@@ -59,7 +59,8 @@
 4. [ ] TDD-殘差 Y 漂移監控（EWMA/CUSUM on e=y−ŷ，自相關感知、不差分）。
 5. **[x] TDD-5/6（INC-3）X*→Ŷ + X* MSPC**：`batch_avm/mapping.py`——`fit_batch_model`（make_soft_sensor 路由 PLS 主力 + CVPlusConformal 可信帶）＋fresh `MSPCModel` on X*（highdim 預投影，reduced_/degraded_ 誠實 surface）；`score_batches`（yhat/CV+ 帶/T²/SPE/GSI/域旗標/RBC top——**僅未降維時歸因**，降維誠實 None）。8 WHY 測試綠、全套 471 passed。
 6. **[x]（INC-4）skeleton + generate_fleet + 選取**：`interface.py` 加 `MACHINE_ID` 入 RESERVED（additive、選用、僅 provenance）；`tep.generate_fleet`（M-2 seed+每機台 σ 偏移=X 側儀器偏差、各自起始日期、registry 註冊 `tep_fleet`、fail-loud）；`batch_avm/selection.py`（machines_in_interval + cut_batches 固定時長 pseudo-batch、批內 Y 平均、尾批 min_frac 丟棄、frame_positions 溯源）。11 測試綠（含 e2e：fleet→選機台→切批→X*→品質→建模評分）、全套 482 passed。
-6b. [ ] TDD-7/10 殘餘：模型比較 CV harness（新模組，非 crossval.py）、池化同質性閘（build-time、between-cell、WARN）。
+6b. **[x] 池化同質性閘**：`batch_avm/homogeneity.py::golden_homogeneity_gate`——between-cell 置換檢定（MANOVA 型組間離差、labels 重排 B=perm_B、固定 seed；**非** in-sample 自我參照）；WARN-only + 指名差異最大特徵（σ 單位）；1-cell trivial pass；小 cell low_power 誠實標（非拒絕≠同質）。`fit_batch_model(cells=...)` 於 build 時跑、進 score summary 治理流。6 測試綠、全套 495 passed。
+6c. [ ] TDD-7 殘餘：模型比較 CV harness（新模組，非 crossval.py）。
 7. [ ] TDD-11 DQIy=DROP ART2、DQIx-only。
 8. [ ] 非 code：Barber crossref VERIFY + DQIy DOI 衝突修正 + Gate2 紅線/step-9 改字 + dcc.Interval 進度基建。
 
