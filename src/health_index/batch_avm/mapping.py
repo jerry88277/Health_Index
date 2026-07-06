@@ -23,6 +23,7 @@ from ..detectors.conformal_cv import CVPlusConformal
 from ..detectors.highdim import effective_rank, reduction_plan
 from ..detectors.mspc import MSPCModel
 from ..detectors.soft_sensor import make_soft_sensor
+from .applicability import applicability_check, fit_applicability
 from .homogeneity import golden_homogeneity_gate
 
 
@@ -47,6 +48,7 @@ class BatchAvmModel:
     red_std_: object = None
     reduce_V_: object = None      # (p_kept, r) 投影矩陣；None＝未降維
     homogeneity_: object = None   # 池化 Golden 同質性閘結果（fit 給 cells 時；設計 §8，WARN-only）
+    ad_: object = None            # G3 正式適用域（leverage + Ŷ 範圍；fit 時建，None=y 範圍退化）
 
     def _kept(self, Xstar: np.ndarray) -> np.ndarray:
         X = np.asarray(Xstar, dtype=float)
@@ -140,6 +142,10 @@ def fit_batch_model(Xstar, y, *, columns=None, cells=None, config: Config = DEFA
     if cells is not None:
         kept_cols = [cols[i] for i in kept_idx]
         m.homogeneity_ = golden_homogeneity_gate(Xk, cells, columns=kept_cols, config=config)
+    try:
+        m.ad_ = fit_applicability(m, X, y)  # G3 正式 AD（leverage + Ŷ 範圍）
+    except ValueError:
+        m.ad_ = None  # golden y 範圍退化 → 誠實不建（不假評）
     return m
 
 
@@ -167,12 +173,16 @@ def score_batches(model: BatchAvmModel, Xstar) -> dict:
         lo = hi = None
     rbc_all = model.mspc_.rbc_spe(Xk) if model.reduce_V_ is None else None
     kept_cols = [model.columns_[i] for i in model.kept_idx_]
+    ad = getattr(model, "ad_", None)  # G3 正式 AD（leverage + Ŷ 範圍）
+    ad_res = applicability_check(ad, model, Xstar) if ad is not None else None
+    ad_batches = ad_res["per_batch"] if ad_res is not None else [None] * len(Xk)
 
     batches = []
     for i in range(len(Xk)):
         rbc_top = None
         if rbc_all is not None and bool(anomaly[i]):
             rbc_top = kept_cols[int(np.argmax(rbc_all[i]))]
+        adb = ad_batches[i] or {}
         batches.append({
             "yhat": float(yhat[i]),
             "band_lo": float(lo[i]) if lo is not None else None,
@@ -185,6 +195,12 @@ def score_batches(model: BatchAvmModel, Xstar) -> dict:
             "anomaly": bool(anomaly[i]),
             "yhat_reliable": bool(not anomaly[i]),
             "rbc_top": rbc_top,
+            # G3 正式 AD（leverage + Ŷ 範圍；ad_ 無則 None）
+            "leverage": adb.get("leverage"),
+            "yhat_in_range": adb.get("yhat_in_range"),
+            "g3_ad_alarm": adb.get("g3_alarm"),
+            "g3_ad_top": adb.get("top_param"),
+            "g3_ad_reason": adb.get("reason"),
         })
     summary = {
         "t2_lim": float(model.mspc_.t2_lim_),
@@ -199,5 +215,6 @@ def score_batches(model: BatchAvmModel, Xstar) -> dict:
         "dropped_columns": list(model.dropped_columns),
         "n_golden": int(model.n_golden_),
         "homogeneity": model.homogeneity_,  # 池化同質性閘（None＝fit 未給 cells，不評不偽造）
+        "applicability": ad_res["summary"] if ad_res is not None else None,  # G3 正式 AD（None＝y 範圍退化）
     }
     return {"batches": batches, "summary": summary, "is_advisory": True}

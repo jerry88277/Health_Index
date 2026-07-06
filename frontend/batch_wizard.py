@@ -551,12 +551,17 @@ def register(app) -> None:
         s = res["summary"]
         y_obs = res["y"][i] if i < len(res.get("y", [])) else None
         band = (f"[{b['band_lo']:.3f}, {b['band_hi']:.3f}]" if b["band_lo"] is not None else "—（無帶）")
-        attr = attribute_batch(res["_model_tok"], res["_xstar"][i])  # 新 G2/G3 歸因（取代舊 rbc_top）
-        g2, g3 = attr["g2"], attr["g3"]
+        attr = attribute_batch(res["_model_tok"], res["_xstar"][i])  # G2 敏感度歸因（Y 事件）
+        g2 = attr["g2"]
         g2_cause = (f"{g2['top_param']}（推動 Ŷ {g2['delta_yhat']:+.3f}）" if g2["reliable"]
                     else "⚠ X* 離域，Ŷ 敏感度歸因不可信")
-        g3_cause = (f"{g3['top_param']}（{g3['top_feature']}）" if g3.get("available") and g3.get("anomaly")
-                    else ("域內未觸發" if g3.get("available") else "—（X* 降維中，暫不歸因）"))
+        # G3 正式 AD（leverage + 宣告 Ŷ 範圍，取代 T²/SPE 代理；ad_ 無則 None）
+        if b.get("g3_ad_alarm") is None:
+            g3_cause = "—（AD 未建：golden Y 範圍退化）"
+        elif b["g3_ad_alarm"]:
+            g3_cause = f"⚠ {b['g3_ad_top']}（{b['g3_ad_reason']}；leverage {b['leverage']:.3f}）"
+        else:
+            g3_cause = f"域內未觸發（leverage {b['leverage']:.3f}，Ŷ 在範圍）"
         rows = [("時間", res["batch_start_times"][i][:16]),
                 ("Ŷ（虛擬量測）", f"{b['yhat']:.3f}　可信帶 {band}"),
                 ("實際 Y", f"{y_obs:.3f}" if y_obs is not None else "未量測"),

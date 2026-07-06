@@ -79,7 +79,7 @@
 每次迭代：讀本清單 → 挑最上面的 `[ ]` → TDD 完成 → 標 `[x]` → 綠燈 commit。
 1. [x] 數值護欄：mspc L2 fail-loud（非有限→raise）+ 條件數 surface + RBC 退化自消證明鎖（風險稽核 rank-9）——`detectors/mspc.py`：非有限輸入 raise、fit 條件數>1e10 警告、RBC 退化欄（Ctilde_jj<1e-8）顯式歸零+errstate。深究：rank-9 的「除≈0→garbage-first」對正確投影**數學自消**（Ctilde_jj→0⟺整列→0⟺resid→0），仍加 fail-loud 防數值雜訊。4 測試綠、全套 518 passed（cabcb57 後）。
 2. [x] UI 整合：把 G1/殘差/新歸因（attribution）接進 9 步精靈第 9 關——`frontend/batch_wizard.py`：下鑽細節舊 rbc_top→新 G2（哪個參數推動 Ŷ，離域 gate）+G3（哪個參數推出域）；第 9 關摘要卡加殘差漂移(G2)+Y-vs-歷史(G1)；`_MODELS` 存 golden(X*,y)、新增 attribute_batch/monitor_y_channel 純函數。8 精靈測試綠、app 200、全套 519 passed。
-3. [ ] 正式 G3 AD：leverage/hat-matrix + 宣告 Ŷ 有效範圍（取代 T²/SPE 代理）
+3. [x] 正式 G3 AD：leverage/hat-matrix + 宣告 Ŷ 有效範圍（取代 T²/SPE 代理）——`batch_avm/applicability.py`：`ApplicabilityDomain`（標準化特徵空間 pinv Gram、QSAR 限 3(rank+1)/n）+ 宣告 Ŷ 範圍 [y_min,y_max]（golden y±5%）；兩**正交**訊號 G3=leverage 超限 OR Ŷ 出範圍，歸因走 leverage 逐特徵貢獻→param。關鍵：Ŷ-範圍是 **T²/SPE 完全偵測不到的響應空間外推**（X 在合理域內卻預測到訓練 Y 範圍外）；p≥n 時 lev_limit>1 誠實標 `leverage_informative=False`（此時 Ŷ-範圍 carry）。fit 時 golden y 範圍退化→raise（不假評），mapping 包 try/except→ad_=None。wire：`fit_batch_model` 建 `model.ad_`、`score_batches` 每批帶 g3_ad_alarm/leverage/yhat_in_range/g3_ad_top/g3_ad_reason + summary["applicability"]；精靈第 9 關下鑽 G3 改用正式 AD。7 AD 測試 + 8 精靈綠、全套綠。
 4. [ ] 多產線總覽畫面（北極星）＋點線進即時記錄/告警史/模型資訊
 5. [ ] CV harness：nested/repeated CV 模型比較 + conformal coverage（新模組，非 crossval.py）
 6. [ ] Barber 2021 + redteam_citations §4b 5 筆 DOI 入 literature_crossref.md
