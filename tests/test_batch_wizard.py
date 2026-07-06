@@ -80,6 +80,35 @@ def test_e2e_wizard_chain_scores_test_interval():
     assert len(fig.data) == 2  # T²/限 與 SPE/限 兩軌
 
 
+def test_score_wires_attribution_and_y_channel_monitoring():
+    # WHY（backlog #2）：第 9 關必須接上新 G2/G3 歸因（取代舊 X-vs-X rbc_top）與 Y 側監控
+    # （殘差 G2 + 純 Y G1）；結構正確即可，correctness 由 test_attribution/residual/y_history 覆蓋。
+    tok = bw.do_cut("tep_fleet", "A", None, None, 10)
+    c = bw._CUT[tok]
+    params = list(c["x_columns"])
+    job = bw.start_convert_job(tok, params, ["mean", "std"], 5.0)
+    for _ in range(300):
+        if bw._JOBS[job]["done"]:
+            break
+        time.sleep(0.05)
+    mtok = bw.fit_from_job(job, tok, list(range(len(c["spans"]))))
+    # _MODELS 現存 4-tuple（含 golden X*, y 供殘差/G1）
+    assert len(bw._MODELS[mtok]) == 4
+    stok = bw.score_test_interval("tep_fleet", "A", None, "2026-03-01 12:00", 10,
+                                  mtok, params, ["mean", "std"], 5.0)
+    res = bw._SCORES[stok]
+    # Y 側監控接上（誠實：資料不足時標 unavailable，非假裝正常）
+    ym = res["y_monitor"]
+    assert set(ym) == {"residual", "g1"}
+    assert ("alarm" in ym["residual"]) or ("unavailable" in ym["residual"])
+    assert ("alarm" in ym["g1"]) or ("unavailable" in ym["g1"])
+    # 下鑽歸因接上（新 G2/G3，取代舊 rbc_top）
+    assert "_model_tok" in res and "_xstar" in res
+    attr = bw.attribute_batch(res["_model_tok"], res["_xstar"][0])
+    assert "top_param" in attr["g2"] and "reliable" in attr["g2"]        # G2 一定有
+    assert ("top_param" in attr["g3"]) or (attr["g3"].get("available") is False)  # G3 降維時誠實 None
+
+
 def test_score_fails_loud_on_stat_mismatch():
     # WHY（c）：測試區間用了不同統計選擇 → X* 欄位不一致 → 必須 fail loud 而非默默餵錯特徵。
     tok = _prep()

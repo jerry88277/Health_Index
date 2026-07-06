@@ -21,10 +21,14 @@ import plotly.graph_objects as go
 from dash import Input, Output, State, ctx, dcc, html, no_update
 
 from health_index.adapters import registry
+from health_index.batch_avm.attribution import domain_exit_attribution, y_event_attribution
 from health_index.batch_avm.mapping import fit_batch_model, score_batches
 from health_index.batch_avm.quality import batch_quality_view
+from health_index.batch_avm.residual import fit_residual_monitor, score_residuals
 from health_index.batch_avm.selection import cut_batches, machines_in_interval
+from health_index.config import DEFAULT
 from health_index.preprocess.batch_features import batch_indicator_matrix, batch_temporal_overlay
+from health_index.y_history import YHistoryMonitor
 
 _ACCENT = "#4338ca"
 _OK, _BAD = "#16a34a", "#dc2626"
@@ -145,22 +149,51 @@ def fit_from_job(job_tok: int, cut_tok: int, golden_batches: list) -> int:
         raise ValueError(f"golden 批有限 y 僅 {int(ok.sum())} 筆（<2），無法建映射模型")
     m = fit_batch_model(Xg[ok], yg[ok], columns=feat_cols)
     tok = next(_token)
-    _MODELS[tok] = (m, feat_cols)
+    _MODELS[tok] = (m, feat_cols, Xg[ok], yg[ok])  # 存 golden (X*, y) 供殘差/G1 監控
     return tok
+
+
+def attribute_batch(model_tok: int, xstar_row) -> dict:
+    """⑨ 下鑽歸因：G2（哪個參數推動 Ŷ）+ G3（哪個參數推出適用域）。正確性見 test_attribution。"""
+    m = _MODELS[model_tok][0]
+    return {"g2": y_event_attribution(m, xstar_row), "g3": domain_exit_attribution(m, xstar_row)}
+
+
+def monitor_y_channel(model, gx_golden, gy_golden, test_xstar, test_y) -> dict:
+    """⑨ Y 側監控：殘差漂移（G2 偵測線）+ 純 Y-vs-歷史（G1）。不足則誠實標 unavailable。"""
+    out: dict = {"residual": None, "g1": None}
+    ty = np.asarray(test_y, dtype=float)
+    try:
+        rm = fit_residual_monitor(model, gx_golden, gy_golden)
+        rres = score_residuals(rm, model, test_xstar, ty)
+        out["residual"] = {**rres["summary"], "null_kind": rres["null_kind"]}
+    except ValueError as e:
+        out["residual"] = {"unavailable": str(e)}
+    gy = np.asarray(gy_golden, dtype=float)
+    gy = gy[np.isfinite(gy)]
+    if gy.size >= DEFAULT.g1_min_golden:
+        out["g1"] = YHistoryMonitor().fit(gy).score(ty)["summary"]
+    else:
+        out["g1"] = {"unavailable": f"歷史 Y 僅 {gy.size} 筆（< {DEFAULT.g1_min_golden}）"}
+    return out
 
 
 def score_test_interval(name: str, machine: str, tstart, tend, batch_minutes: int,
                         model_tok: int, params: list, stats: list, trim_pct: float) -> int:
     """⑧→⑨ 測試區間切批 → X* → score_batches，回 score token。"""
-    m, feat_cols = _MODELS[model_tok]
+    m, feat_cols, gx, gy = _MODELS[model_tok]
     cut_tok = do_cut(name, machine, tstart, tend, batch_minutes)
     out = convert_cells(cut_tok, params, stats, trim_pct)
     if list(out["xs_cols"]) != list(feat_cols):
         raise ValueError("測試區間的 X* 欄位與建模時不一致（參數/統計選擇需相同）")
-    res = score_batches(m, out["xs"][feat_cols].to_numpy(dtype=float))
+    test_xstar = out["xs"][feat_cols].to_numpy(dtype=float)
+    res = score_batches(m, test_xstar)
     c = _CUT[cut_tok]
     res["batch_start_times"] = c["batch_start_times"]
     res["y"] = [None if not np.isfinite(v) else float(v) for v in c["y"]]
+    res["_model_tok"] = model_tok           # 供下鑽歸因（呈現層快取，不入 dcc.Store）
+    res["_xstar"] = test_xstar
+    res["y_monitor"] = monitor_y_channel(m, gx, gy, test_xstar, c["y"])  # 殘差(G2)+G1
     tok = next(_token)
     _SCORES[tok] = res
     return tok
@@ -459,7 +492,7 @@ def register(app) -> None:
     def _bw_fit(_, job, tok, golden):
         try:
             mtok = fit_from_job(job, tok, golden or [])
-            m, feat_cols = _MODELS[mtok]
+            m, feat_cols, _gx, _gy = _MODELS[mtok]
             info = [html.Div(f"✓ 模型建立完成：{('PLS（高維共線）' if m.mapping_kind == 'pls' else 'GPR（小維度非線性）')}"
                              f"，特徵 {len(feat_cols)} 欄、golden {m.n_golden_} 批", style={"color": _OK}),
                     html.Div(("✓ 可信帶：CV+（誠實最壞覆蓋 ≥80%）" if m.cv_.available
@@ -488,11 +521,19 @@ def register(app) -> None:
             n_anom = sum(b["anomaly"] for b in res["batches"])
             s = res["summary"]
             gsi_mean = float(np.mean([b["gsi"] for b in res["batches"]]))
+            ym = res.get("y_monitor") or {}
+            rd = ym.get("residual") or {}
+            g1 = ym.get("g1") or {}
+            yflag = lambda d: "—" if "unavailable" in d else ("⚠" if d.get("alarm") else "✓")
             cards = html.Div(style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "fontSize": "14px"}, children=[
                 html.Span(f"批數 {len(res['batches'])}"),
-                html.Span(f"隱性飄移批 {n_anom}", style={"color": _BAD if n_anom else _OK, "fontWeight": 500}),
+                html.Span(f"X* 域偏移批 {n_anom}", style={"color": _BAD if n_anom else _OK, "fontWeight": 500}),
                 html.Span(f"GSI 均值 {gsi_mean:.2f}"),
                 html.Span(f"可信度：{'CP-band（最壞覆蓋 ≥' + format(s['coverage_floor'], '.0%') + '）' if s['cv_available'] else '無帶（Y 不足）'}"),
+                html.Span(f"殘差漂移 G2：{yflag(rd)}" + ("　映射斷裂" if rd.get("alarm") else ""),
+                          style={"color": _BAD if rd.get("alarm") else _OK, "fontWeight": 500}),
+                html.Span(f"Y-vs-歷史 G1：{yflag(g1)}" + ("　Y 偏移" if g1.get("alarm") else ""),
+                          style={"color": _BAD if g1.get("alarm") else _OK, "fontWeight": 500}),
             ])
             return stok, "✓ 評分完成", cards, score_figure(res)
         except Exception as e:
@@ -510,6 +551,12 @@ def register(app) -> None:
         s = res["summary"]
         y_obs = res["y"][i] if i < len(res.get("y", [])) else None
         band = (f"[{b['band_lo']:.3f}, {b['band_hi']:.3f}]" if b["band_lo"] is not None else "—（無帶）")
+        attr = attribute_batch(res["_model_tok"], res["_xstar"][i])  # 新 G2/G3 歸因（取代舊 rbc_top）
+        g2, g3 = attr["g2"], attr["g3"]
+        g2_cause = (f"{g2['top_param']}（推動 Ŷ {g2['delta_yhat']:+.3f}）" if g2["reliable"]
+                    else "⚠ X* 離域，Ŷ 敏感度歸因不可信")
+        g3_cause = (f"{g3['top_param']}（{g3['top_feature']}）" if g3.get("available") and g3.get("anomaly")
+                    else ("域內未觸發" if g3.get("available") else "—（X* 降維中，暫不歸因）"))
         rows = [("時間", res["batch_start_times"][i][:16]),
                 ("Ŷ（虛擬量測）", f"{b['yhat']:.3f}　可信帶 {band}"),
                 ("實際 Y", f"{y_obs:.3f}" if y_obs is not None else "未量測"),
@@ -517,7 +564,8 @@ def register(app) -> None:
                 ("SPE / 限", f"{b['spe']:.2f} / {s['spe_lim']:.2f}" + ("　⚠ 超限" if b["spe_over"] else "")),
                 ("GSI", f"{b['gsi']:.2f}"),
                 ("Ŷ 可信", "✓ 域內" if b["yhat_reliable"] else "⚠ X* 離建模域（Ŷ 不可信）"),
-                ("疑似肇因（param×stat）", b["rbc_top"] or "—（降維中不歸因）")]
+                ("G2 哪個參數推動 Ŷ", g2_cause),
+                ("G3 哪個參數推出域", g3_cause)]
         return _card([html.Div(f"批 P{i + 1} 細節", style={"fontWeight": 500, "marginBottom": "6px"}),
                       html.Table([html.Tr([html.Td(k, style={"color": "#51607a", "padding": "2px 10px 2px 0"}),
                                            html.Td(v)]) for k, v in rows], style={"fontSize": "13px"})])

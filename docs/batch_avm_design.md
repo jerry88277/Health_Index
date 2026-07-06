@@ -78,7 +78,7 @@
 ## 13. 開發 backlog（loop 追蹤，狀態驅動）
 每次迭代：讀本清單 → 挑最上面的 `[ ]` → TDD 完成 → 標 `[x]` → 綠燈 commit。
 1. [x] 數值護欄：mspc L2 fail-loud（非有限→raise）+ 條件數 surface + RBC 退化自消證明鎖（風險稽核 rank-9）——`detectors/mspc.py`：非有限輸入 raise、fit 條件數>1e10 警告、RBC 退化欄（Ctilde_jj<1e-8）顯式歸零+errstate。深究：rank-9 的「除≈0→garbage-first」對正確投影**數學自消**（Ctilde_jj→0⟺整列→0⟺resid→0），仍加 fail-loud 防數值雜訊。4 測試綠、全套 518 passed（cabcb57 後）。
-2. [ ] UI 整合：把 G1/殘差/新歸因（attribution）接進 9 步精靈第 9 關（現下鑽仍用舊 rbc_top＝X-vs-X）
+2. [x] UI 整合：把 G1/殘差/新歸因（attribution）接進 9 步精靈第 9 關——`frontend/batch_wizard.py`：下鑽細節舊 rbc_top→新 G2（哪個參數推動 Ŷ，離域 gate）+G3（哪個參數推出域）；第 9 關摘要卡加殘差漂移(G2)+Y-vs-歷史(G1)；`_MODELS` 存 golden(X*,y)、新增 attribute_batch/monitor_y_channel 純函數。8 精靈測試綠、app 200、全套 519 passed。
 3. [ ] 正式 G3 AD：leverage/hat-matrix + 宣告 Ŷ 有效範圍（取代 T²/SPE 代理）
 4. [ ] 多產線總覽畫面（北極星）＋點線進即時記錄/告警史/模型資訊
 5. [ ] CV harness：nested/repeated CV 模型比較 + conformal coverage（新模組，非 crossval.py）
