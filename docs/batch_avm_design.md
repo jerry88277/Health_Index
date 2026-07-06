@@ -74,3 +74,18 @@
 
 ## 12. 待建基礎建設
 - **[x]（INC-5）** Gate2「%進度轉換」已落地：`frontend/batch_wizard.py` thread + `dcc.Interval` 輪詢 + 模組級 job-state（token 入 dcc.Store）；9 步精靈掛入 demo_app `scr-batchwiz`（與 5 步精靈並存，驗證後汰換）。callback 皆薄殼包純函數（tests/test_batch_wizard.py）；UI 視覺未渲染驗證（NOT VERIFIED-visual，比照 demo_app 慣例）。
+
+## 13. 開發 backlog（loop 追蹤，狀態驅動）
+每次迭代：讀本清單 → 挑最上面的 `[ ]` → TDD 完成 → 標 `[x]` → 綠燈 commit。
+1. [x] 數值護欄：mspc L2 fail-loud（非有限→raise）+ 條件數 surface + RBC 退化自消證明鎖（風險稽核 rank-9）——`detectors/mspc.py`：非有限輸入 raise、fit 條件數>1e10 警告、RBC 退化欄（Ctilde_jj<1e-8）顯式歸零+errstate。深究：rank-9 的「除≈0→garbage-first」對正確投影**數學自消**（Ctilde_jj→0⟺整列→0⟺resid→0），仍加 fail-loud 防數值雜訊。4 測試綠、全套 518 passed（cabcb57 後）。
+2. [ ] UI 整合：把 G1/殘差/新歸因（attribution）接進 9 步精靈第 9 關（現下鑽仍用舊 rbc_top＝X-vs-X）
+3. [ ] 正式 G3 AD：leverage/hat-matrix + 宣告 Ŷ 有效範圍（取代 T²/SPE 代理）
+4. [ ] 多產線總覽畫面（北極星）＋點線進即時記錄/告警史/模型資訊
+5. [ ] CV harness：nested/repeated CV 模型比較 + conformal coverage（新模組，非 crossval.py）
+6. [ ] Barber 2021 + redteam_citations §4b 5 筆 DOI 入 literature_crossref.md
+7. [ ] 即時 headless runner（batch-AVM 排程跑、save/load state）
+8. [ ] G1×G3 同窗共發：兩封信 + 優先規則
+9. [ ] 批次生命週期 runtime（10min 起監 X→2h Ŷ_middle→4h Ŷ_final→出 Y 查 G1）
+10. [ ] 殘差自相關 ARIMA 白化
+11. [ ] mindmap v3（架構圖更新至 batch-AVM）
+（**暫緩，不在 loop**：SMTP 串接、每目標驗收指標、跨線多重比較/FPR——使用者定調；UI 視覺實跑——環境無法渲染。）
