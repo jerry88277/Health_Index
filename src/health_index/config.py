@@ -78,6 +78,16 @@ class Config:
     y_trend_z_max: float = 3.0   # 增量8：預測品質 Ŷ 窗均值相對 golden Ŷ 的水準漂移（golden-σ 單位）超此→品質飄移旗標（3σ SPC）
     y_extrap_confidence_min: float = 0.6  # 紅隊 A13：窗 confidence（域相似度）< 此 → X 離建模域＝GPR 外推（Ŷ→prior mean、z 縮小不可信為健康）→ 標 yhat_drift_reliable=False
 
+    # --- G1 純 Y-vs-歷史監控（獨立輕量模組，CLAUDE.md Rule 2 明載例外；獨立於 X 與 CL spec）---
+    g1_min_golden: int = 20    # 歷史 Y 最少筆數（不足 fail loud，不假評）
+    g1_cusum_k: float = 0.5    # CUSUM allowance（σ 單位；偵測 ~1σ 漂移標準取 δ/2）
+    g1_cusum_h: float = 5.0    # CUSUM 決策區間（σ 單位）；ARL 正式治理隨驗收指標階段（使用者定調暫緩）
+    g1_h_margin: float = 1.5   # h 經驗下限倍數：歷史 Y 自跑 CUSUM 之 max(C±)×此值（吸收 MADσ 抽樣誤差，
+                               # 否則 σ 低估 ~10% 就會讓平穩 Y 隨機走破 h——RED 實測；比照 MSPC 經驗控制限）
+    g1_ks_window: int = 5      # 分布層滑窗筆數（使用者定案 3–5 筆）
+    g1_ks_alpha: float = 0.01  # 滑窗 KS 顯著水準（滑動多重比較未校正→取保守值；正式校準隨驗收指標）
+    g1_ks_persistence: int = 2  # KS 層持續性：連續 k 窗顯著才報警（濾滑窗多重比較偶發，比照 drift_persistence_k）
+
     # --- L4 漂移 ---
     drift_window: int = 60          # 漂移偵測窗大小（與檢定力下限相關，AC-2）
     ks_alpha: float = 0.01          # KS first-pass 顯著水準（廉價 1D 哨兵）
