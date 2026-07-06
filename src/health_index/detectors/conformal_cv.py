@@ -76,14 +76,17 @@ class CVPlusConformal:
         self.fold_of_ = fold_of
         self.models_: list = []
         resid = np.empty(n, dtype=float)
+        resid_signed = np.empty(n, dtype=float)
         for k in range(K):
             te = np.where(fold_of == k)[0]
             trn = np.where(fold_of != k)[0]
             model = make_estimator().fit(X[trn], y[trn])
             self.models_.append(model)
             pred = np.asarray(model.predict(X[te]), dtype=float).ravel()
+            resid_signed[te] = y[te] - pred
             resid[te] = np.abs(y[te] - pred)
         self.cv_resid_ = resid
+        self.cv_resid_signed_ = resid_signed  # out-of-fold **有號**殘差（殘差漂移監控的誠實 null）
         self.full_model_ = make_estimator().fit(X, y)  # 點預測用全資料模型
         self._n = n
         return self
