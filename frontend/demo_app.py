@@ -24,8 +24,10 @@ from health_index.deploy.events import IncidentStore
 
 try:  # 支援套件匯入（tests）與 script 直跑（python frontend/demo_app.py）兩種啟動方式
     from frontend import batch_wizard as _bw
+    from frontend import fleet as _fleet
 except ImportError:
     import batch_wizard as _bw
+    import fleet as _fleet
 
 _MODELS_DIR = os.path.join(tempfile.gettempdir(), "health_index_demo_models")
 _INCIDENTS = os.path.join(_MODELS_DIR, "incidents.json")  # 事件閉環持久化
@@ -92,6 +94,7 @@ app.layout = html.Div(
                                         options=[{"label": " 一般（白話）", "value": "operator"},
                                                  {"label": " 工程師（含統計指標）", "value": "engineer"}],
                                         style={"display": "inline-block", "marginRight": "12px", "fontSize": "13px"}),
+                         _btn("產線總覽", "nav-fleet", style={"marginRight": "8px"}),
                          _btn("批次精靈", "nav-batchwiz", style={"marginRight": "8px"}),
                          _btn("段分析", "nav-segview", style={"marginRight": "8px"}),
                          _btn("事件", "nav-events", style={"marginRight": "8px"}), _btn("總覽", "nav-home")]),
@@ -102,6 +105,7 @@ app.layout = html.Div(
         html.Div(id="scr-events", style={"display": "none"}),
         html.Div(id="scr-history", style={"display": "none"}),
         html.Div(id="scr-segview", style={"display": "none"}),
+        html.Div(_fleet.layout(), id="scr-fleet", style={"display": "none"}),
         html.Div(_bw.layout(), id="scr-batchwiz", style={"display": "none"}),
         dcc.Download(id="dl-incidents"),
         dcc.Download(id="dl-timeline"),
@@ -435,12 +439,14 @@ for _child in app.layout.children:
               Input("btn-hist-home", "n_clicks"),
               Input("nav-segview", "n_clicks"), Input("btn-segview-home", "n_clicks"),
               Input("nav-batchwiz", "n_clicks"),
+              Input("nav-fleet", "n_clicks"), Input("btn-fleet-home", "n_clicks"),
               prevent_initial_call=True)
 def _route(*_):
     t = ctx.triggered_id
     return {"nav-home": "home", "btn-results-home": "home", "go-results": "results",
             "nav-events": "events", "btn-events-home": "home", "btn-hist-home": "home",
-            "nav-segview": "segview", "btn-segview-home": "home", "nav-batchwiz": "batchwiz"}.get(t, no_update)
+            "nav-segview": "segview", "btn-segview-home": "home", "nav-batchwiz": "batchwiz",
+            "nav-fleet": "fleet", "btn-fleet-home": "home"}.get(t, no_update)
 
 
 @app.callback(Output("bundle-store", "data", allow_duplicate=True), Output("screen", "data", allow_duplicate=True),
@@ -509,14 +515,14 @@ def _wiz_bind(wp):
 
 @app.callback(Output("scr-home", "style"), Output("scr-wizard", "style"), Output("scr-results", "style"),
               Output("scr-events", "style"), Output("scr-history", "style"), Output("scr-segview", "style"),
-              Output("scr-batchwiz", "style"),
+              Output("scr-fleet", "style"), Output("scr-batchwiz", "style"),
               Input("screen", "data"))
 def _show_screen(screen):
     vis, hid = {"display": "block"}, {"display": "none"}
     return (vis if screen == "home" else hid, vis if screen == "wizard" else hid,
             vis if screen == "results" else hid, vis if screen == "events" else hid,
             vis if screen == "history" else hid, vis if screen == "segview" else hid,
-            vis if screen == "batchwiz" else hid)
+            vis if screen == "fleet" else hid, vis if screen == "batchwiz" else hid)
 
 
 @app.callback(Output("stepper", "children"), Output("wstep-left", "children"),
@@ -1262,6 +1268,7 @@ def _segview_run(_n, name, method, params, stats):
 
 
 _bw.register(app)  # batch-AVM 9 步精靈 callbacks（INC-5；與 5 步精靈並存）
+_fleet.register(app, registry_path=_REGISTRY, models_dir=_MODELS_DIR, incidents_path=_INCIDENTS)  # #4 產線總覽
 
 if __name__ == "__main__":
     app.run(debug=False, port=8051)
