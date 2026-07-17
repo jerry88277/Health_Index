@@ -1,7 +1,7 @@
 # Red-Team 文獻引用查證報告（獨立對抗審查）
 
 > 審查日期：2026-06-02 · 角色：學術文獻誠信獨立 red team（懷疑、不信任既有結論、逐筆親查）
-> 狀態註記（2026-07）：本檔為 modernization 階段查證 ledger（歷史紀錄，勿改裁決本文）。§4a 必改已落地；§4b 五筆補登書目**尚未轉錄至 literature_crossref.md**（唯一引用真相）；後續文獻待辦（Barber 2021 VERIFY、DQIy DOI 已統一 2146006）改由 batch_avm_design.md §11 追蹤。
+> 狀態註記（2026-07）：本檔為 modernization 階段查證 ledger（歷史紀錄，勿改裁決本文）。§4a 必改已落地；§4b 五筆補登書目**已於 2026-07-17 轉錄至 literature_crossref.md**（唯一引用真相，§1「Conformal / 現代 soft-sensor 補登」，並逐筆重查 CrossRef primary source）；**Barber 2021 亦已 VERIFY**（DOI 10.1214/20-AOS1965，Ann. Statist. 49(1):486–507，頁碼經 Project Euclid 確認）併同轉錄。文獻待辦清空。
 > 方法：以 **CrossRef API**（DOI 註冊權威）為第一優先，輔以 PMLR / JMLR / 出版商頁面 / arXiv 交叉比對。會議論文（PMLR/NeurIPS/JMLR）多無傳統 DOI，標明其權威識別碼（PMLR vol、JMLR vol、ACM 代理 DOI）。
 > 紀律：嚴禁捏造。每筆給 VERIFIED / CORRECTED / NOT FOUND + 正確 DOI/URL。
 > 對象：`modernization_map.md`、四份 `modernization_L*.md`、`literature_crossref.md`，並 audit-the-audit 審 `modernization_audit.md` 自身 F1–F3 事實主張。

@@ -28,6 +28,19 @@
 
 > 註：RI 與 GSI 的「正典」原始定義出自 **Cheng et al. 2008（T-SM 21(1)）**；其後在 Cheng, Huang, Kao 2012（T-ASE 9(1)，引用編號 1）中整合進完整 AVM 系統架構。DQI_x / DQI_y 出自 Huang & Cheng 2011（T-SM 24(3)，引用編號 2）。
 
+### Conformal / 現代 soft-sensor 補登（2026-07-17 CrossRef + 出版商 primary-source 二次查證）
+
+> 來源：`conformal_cv.py` 的 **Barber 2021**（原標 NOT VERIFIED，CV+/jackknife+ 理論依據）+ `redteam_citations.md` §4b 五筆（2026-06-02 首查）。本輪逐筆重查 **CrossRef API**（`api.crossref.org/works/<doi>`，DOI 註冊權威）取回題名/卷期/作者/年；Barber 頁碼 CrossRef 未收錄 → 另經 **Project Euclid** 出版商頁確認 486–507。零捏造、零 NOT FOUND。
+
+| 文獻 | 用途（本專案） | 查證狀態 | 正確書目 | DOI |
+|---|---|---|---|---|
+| **Barber, Candès, Ramdas & Tibshirani 2021** | CV+/jackknife+ 小 n 可信區間之理論依據（`detectors/conformal_cv.py`；worst-case 覆蓋 ≥1−2α 之出處） | **VERIFIED** | R. F. Barber, E. J. Candès, A. Ramdas, R. J. Tibshirani, "Predictive inference with the jackknife+", *The Annals of Statistics*, vol.49, no.1, pp.486–507, Feb 2021 | 10.1214/20-AOS1965 |
+| Zhang, Zhou et al. 2025 | 工業時序 CP + 分佈偏移下的不確定度量化 | **VERIFIED** | R. Zhang et al., "Uncertainty Quantification Based on Conformal Prediction for Industrial Time Series With Distribution Shift", *IEEE Transactions on Industrial Informatics*, vol.21, no.5, pp.3676–3685, 2025 | 10.1109/TII.2025.3529920 |
+| Wang et al. 2022 | Unified JITL 自適應 soft sensor（非線性/時變化工程序） | **VERIFIED** | P. Wang, Yin, Bai, Deng, Shao, "A unified just-in-time learning paradigm and its application to adaptive soft sensing for nonlinear and time-varying chemical process", *Chemical Engineering Science*, vol.258, art.117753, 2022 | 10.1016/j.ces.2022.117753 |
+| Zhou et al. 2023 | 時空 deep LSTM soft sensor（嵌入領域知識） | **VERIFIED**（⚠️ 期刊為 *Eng. Appl. Artif. Intell.*，非 audit 誤植的 Control Eng. Pract.） | J.-Y. Zhou, Yang, Wang, Cao, "A soft sensor modeling framework embedded with domain knowledge based on spatio-temporal deep LSTM for process industry", *Engineering Applications of Artificial Intelligence*, vol.126, art.106847, 2023 | 10.1016/j.engappai.2023.106847 |
+| Ji et al. 2024 | CVA 殘差統計 incipient 故障早偵測（動態程序） | **VERIFIED** | H. Ji, Hou, Shao, Zhang, "Incipient fault detection for dynamic processes with canonical variate residual statistics analysis", *Chemometrics and Intelligent Laboratory Systems*, vol.252, art.105189, 2024 | 10.1016/j.chemolab.2024.105189 |
+| Guan et al. 2023 | 條件正規化流 MTS 異常偵測（⚠️ 通用 MTS，非 TEP/化工專屬 → 引用須標「題材匹配為類比」） | **VERIFIED** | S. Guan et al., "Conditional normalizing flow for multivariate time series anomaly detection", *ISA Transactions*, vol.143, pp.231–243, 2023 | 10.1016/j.isatra.2023.09.002 |
+
 ---
 
 ## 2. 五維度 半導體 ↔ 化工 對照表

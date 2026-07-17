@@ -1,5 +1,6 @@
-"""L3 小 n 可信度：CV+/jackknife+ conformal（Barber, Candès, Ramdas & Tibshirani 2021
-[NOT VERIFIED：待 crossref VERIFY 後方可作已驗證引用，紅隊 Rule 12]）。
+"""L3 小 n 可信度：CV+/jackknife+ conformal（Barber, Candès, Ramdas & Tibshirani,
+"Predictive inference with the jackknife+", Ann. Statist. 49(1):486–507, 2021；
+VERIFIED DOI 10.1214/20-AOS1965，見 docs/literature_crossref.md §1「Conformal 補登」）。
 
 為何存在：split-CP 需**不相交** calibration（``cp_min_calibration``=200）；本專案 golden 為
 單一 campaign（n 常 <200）→ split-CP 退回 GSI、Ŷ 失去可信區間。CV+/jackknife+ 以 K-fold
