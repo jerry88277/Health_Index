@@ -63,9 +63,10 @@
 <header>
   <div class="top">
     <div>
-      <h1>🧭 Health_Index 系統架構心智圖</h1>
+      <h1>🧭 Health_Index 系統架構心智圖 <span style="font-size:12px;color:var(--sub);font-weight:400;">v3 · 2026-07（batch-AVM 主線）</span></h1>
       <div class="hint">產線的隱形健康檢查：抓出「每個儀表看起來都正常、品質卻已悄悄跑偏」的異常，提早示警、減少壞料與停線。
-        <span class="jargon">（技術定位：AVM 精神的泛化工連續製程隱性飄移偵測）</span></div>
+        <b>北極星＝多產線健康儀表板</b>：一屏看全部產線 → 點產線看即時記錄／告警歷史／模型資訊，告警可下鑽到「是哪個製程參數或哪個量測偏移」。
+        <span class="jargon">（技術定位：AVM 精神的泛化工製程隱性飄移偵測；連續五維鏈 + batch-AVM 路徑雙軌）</span></div>
     </div>
     <div class="legend" id="legend"></div>
   </div>
@@ -73,6 +74,12 @@
     <b>感測器數據</b><span class="arw">→</span><b>①擋壞資料</b><span class="arw">→</span><b>②比對關係</b>
     <span class="arw">→</span><b>③反推品質</b><span class="arw">→</span><b>④看分佈</b><span class="arw">→</span>
     <b>健康分數 0–1</b><span class="arw">→</span><b>亮燈/開事件/估效益</b>
+  </div>
+  <div class="flow">
+    <span style="color:#cbd5e1">batch-AVM 路徑：</span><b>整批資料</b><span class="arw">→</span><b>[參數×統計] X*</b>
+    <span class="arw">→</span><b>映射 X*→Ŷ</b><span class="arw">→</span><b>G3 越適用域?</b><span class="arw">→</span>
+    <b>真實 Y 出爐</b><span class="arw">→</span><b>G1 比歷史?</b><span class="arw">→</span><b>G2 哪個參數</b>
+    <span class="arw">→</span><b>寄信通知</b>
   </div>
 </header>
 <div class="wrap">
@@ -137,6 +144,25 @@ const TREE={name:"健康度偵測系統",root:true,color:"var(--c1)",children:[
    {name:"L5 批次軌跡",color:C.det,leaf:true,detail:`<b>白話：批次製程專用，把兩批的生產軌跡對齊比對。</b> <code>DTW</code> + Sakoe-Chiba band 限成本（penicillin/IndPenSim）。<b>連續穩態不適用（誠實標）。</b> <span class="path">detectors/batch_dtw.py</span>`}
  ]},
 
+ {name:"batch-AVM 路徑",color:C.feat,children:[
+   {name:"為何另闢一軌",color:C.feat,leaf:true,detail:`<b>白話：連續五維鏈是「逐時刻」看；batch-AVM 是「一批當一個觀測」看。</b> 每批把整段製程壓成 <b>X*=[參數×統計]</b> 一列，接映射模型算 Ŷ——這才對得上 AVM 原生的 batch/R2R 語意。<b>隔離契約（Rule 3）</b>：本路徑為 <b>advisory</b>，<b>不回主 Health Index 融合／不進主告警</b>，以 AST import-graph 結構測試鎖住（<code>tests/test_batch_avm_isolation.py</code>）。<span class="path">src/health_index/batch_avm/</span>`},
+   {name:"X* 特徵轉換",color:C.feat,leaf:true,detail:`把每批的時序壓成 <b>[參數×統計]</b>（mean/std/min/max/range/median + count/cv）；temporal 疊圖（同批多條軌跡對齊製程時間）→ indicator run-chart（橫軸為批生產時間）。<span class="path">preprocess/batch_features.py · batch_avm/selection.py</span>`},
+   {name:"映射模型 X*→Ŷ",color:C.feat,leaf:true,detail:`<code>fit_batch_model</code>：依維度自動路由 <b>GPR / PLS</b>；可信帶用 <b>CV+/jackknife+ conformal</b>（小 n 友善，golden 常 &lt;200 使 split-CP 不可用）。<b>誠實口徑</b>：CV+ 覆蓋為 worst-case <b>≥1−2α</b>（α=0.1→0.80），<b>不得</b>沿用 split-CP 的 ≥1−α。<span class="path">batch_avm/mapping.py · detectors/conformal_cv.py</span>`},
+   {name:"G3 正式適用域",color:C.feat,leaf:true,detail:`<b>白話：判斷「這批的 Ŷ 還算得準嗎」。</b> 兩個<b>正交</b>訊號——<b>leverage</b> h(x)=1/n+xₛᵀ(XₛᵀXₛ)⁺xₛ（QSAR 限 3(rank+1)/n）＝X 結構外推；<b>宣告 Ŷ 有效範圍</b>＝響應空間外推（<b>T²/SPE 完全偵測不到</b>：X 落合理域內卻預測到訓練 Y 範圍外）。p≥n 時 lev_limit&gt;1 誠實標 <code>leverage_informative=False</code>。<span class="path">batch_avm/applicability.py</span>`},
+   {name:"殘差監控 + 白化",color:C.feat,leaf:true,detail:`監控 e=y−ŷ 相對<b>歷史殘差</b>的漂移（＝映射斷裂，非製程移動）。null 優先用 CV+ <b>out-of-fold</b> 有號殘差（in-sample 偏窄會虛增誤報）；<b>域閘先行</b>（X* 離域批不納入，殘差是外推誤差非漂移）。<b>AR 白化</b>：Ljung-Box 檢定顯著才套 AR(p)（CUSUM 界假設獨立，正自相關會膨脹誤報；經驗 h 只吸收尺度、吸收不了相依結構）；不顯著則 identity。<span class="path">batch_avm/residual.py · whiten.py</span>`},
+   {name:"歸因（G2/G3）",color:C.feat,leaf:true,detail:`<b>G2</b>（Y 漂移→哪個參數）：敏感度×偏差（∂ŷ/∂x 中央差分、PLS 精確），離域時標「歸因不可信」。<b>G3</b>（越域→哪個參數）：leverage 逐特徵貢獻聚合到參數。<span class="path">batch_avm/attribution.py</span>`},
+   {name:"同質性閘",color:C.feat,leaf:true,detail:`池化多機台/多時段當 golden 前，先以<b>細胞間置換檢定</b>（非 in-sample 自我參照）檢查同質性；WARN-only、單細胞 no-op、低檢定力標 <code>low_power</code>。<span class="path">batch_avm/homogeneity.py</span>`},
+   {name:"headless runner",color:C.feat,leaf:true,detail:`<code>poll_batches</code> 純函式 + <code>BatchRunnerState</code>(cursor) + save/load state ⇒ <b>外部排程器驅動、非常駐 daemon</b>（比照 deploy/runner.py 的 D2 決策）。<b>冪等於 cursor</b>：重入不重處理已發批（避免重複告警／重複觸發 SMTP 扣費）、重啟安全。<span class="path">batch_avm/runner.py</span>`},
+   {name:"批次生命週期",color:C.feat,leaf:true,detail:`4h CSTR 批的相位狀態機：<b>10min</b> 起監 X → <b>2h</b> Ŷ_middle（越域→通知）→ <b>4h</b> Ŷ_final（越域→通知）→ <b>真實 Y 出爐</b>才查 G1（Ŷ 相位<b>結構上絕不出 G1</b>）→ G2 歸因。同批 G3 只發一次。<b>誠實標記</b>：10min/2h 的 X* 來自<b>部分批</b>、與 golden 全批 X* 不可交換 → 門檻未嚴格校準，標 <code>partial_basis=True</code>，屬早期預警非已校準告警。<span class="path">batch_avm/lifecycle.py</span>`}
+ ]},
+
+ {name:"三目標與通知",color:C.fuse,children:[
+   {name:"G1 純 Y-vs-歷史",color:C.fuse,leaf:true,detail:`<b>白話：實際化驗出來的品質，跟過去比是不是開始偏了——不看製程參數、也不看規格上下限。</b> 刻意做成<b>獨立輕量模組</b>（CUSUM/KS on raw Y），不硬塞進五層 PCA/T²/SPE 框架（Rule 2）。<b>關鍵區分</b>：殘差 e=y−ŷ 經 ŷ 依賴 X ⇒ <b>不滿足 G1</b>，故另起純 Y 監控。ground truth 用<b>合成儀器漂移 adapter</b>（TEP 的 Y=f(X)，結構上無法證 G1）。<span class="path">src/health_index/y_history.py · adapters/instrument_drift.py</span>`},
+   {name:"G2 Y漂移→哪個參數",color:C.fuse,leaf:true,detail:`實際 Y 開始漂移時，抓出<b>是哪個製程參數造成的</b>——殘差監控觸發 → 敏感度×偏差歸因 → 指名參數。<span class="path">batch_avm/residual.py · attribution.py</span>`},
+   {name:"G3 Ŷ越域→哪個參數",color:C.fuse,leaf:true,detail:`虛擬量測 Ŷ 超出模型認定的有效範圍時預警，並指名<b>是哪個參數把它推出域</b>（leverage 貢獻）。<span class="path">batch_avm/applicability.py</span>`},
+   {name:"通知與優先規則",color:C.fuse,leaf:true,detail:`<b>G1×G3 同窗共發＝兩封獨立信、不合併成單一裁決</b>（兩者正交：G1 是已確認的真實量測偏離、G3 是 Ŷ 預測可信度警訊）。優先 <code>PRECEDENCE</code> G1(1)&gt;G2(2)&gt;G3(3)；兩封 <code>co_fired</code> 交叉引用讓收件人見全貌。<b>SMTP 傳輸為外部現成模組、待串接</b>（本層只產生確定性 payload）。<span class="path">src/health_index/notify.py</span>`}
+ ]},
+
  {name:"融合決策",color:C.fuse,children:[
    {name:"health.py",color:C.fuse,leaf:true,detail:`<b>白話：把各關的分數綜合成一個 0–1 健康指標，太低就告警。</b> 各層 0–1 子分數（1=健康，方向統一）→ 加權 HI（L1/L2/L4）；<code>hard_gates</code> 硬閘安全網；<code>confidence</code>＝T² 域相似度（判讀可信度）。<span class="path">src/health_index/health.py</span>`},
    {name:"單一決策點",color:C.fuse,leaf:true,detail:`<code>fwer_alarm</code>：各層對 golden null 尾機率→<b>Holm 校正</b>→族系錯誤率 FWER≤α（golden 誤報率受控）。權威出口 <code>alarm()</code>＝is_alarm ∨ fwer_alarm 聯集。`},
@@ -156,14 +182,17 @@ const TREE={name:"健康度偵測系統",root:true,color:"var(--c1)",children:[
  {name:"驗證/DoD",color:C.val,children:[
    {name:"跨集 DoD",color:C.val,leaf:true,detail:`<b>白話：證明系統在多個資料集上真的成立（不是只在一個 demo 湊巧）。</b> 三判準 harness：golden 低分、隱性飄移早於 SPC、能分乾淨回歸 vs 殘留飄移。<span class="path">validation/benchmark.py</span>`},
    {name:"零調參 robust",color:C.val,leaf:true,detail:`多組態零 per-config 調參檢核（AC-1/2/3）：同一套門檻/參數跨資料集不個別調校仍成立。<span class="path">validation/crossval.py</span>`},
-   {name:"真實集不退化",color:C.val,leaf:true,detail:`UCI Gas Drift 真實漂移集（AC-4）：golden 段不誤報、真實漂移抓得到。<span class="path">validation/real_set.py</span>`}
+   {name:"真實集不退化",color:C.val,leaf:true,detail:`UCI Gas Drift 真實漂移集（AC-4）：golden 段不誤報、真實漂移抓得到。<span class="path">validation/real_set.py</span>`},
+   {name:"CV harness",color:C.val,leaf:true,detail:`<b>回答另一問題（與 crossval.py 分工）</b>：某資料集上<b>哪個映射模型更準</b>、<b>CV+ 帶是否真達覆蓋</b>。<code>repeated_kfold_score</code>／<code>compare_models</code>（out-of-fold 無洩漏）、<code>conformal_coverage</code>（外層 K-fold <b>held-out</b> 覆蓋稽核，底線誠實 1−2α）、<code>nested_cv_selection</code>（無偏估選擇程序，不被 in-sample 完美的過擬合模型騙）。repeats 用確定性乘法雜湊排列產生<b>真不同</b>折分割（無 RNG）。<span class="path">validation/cv_harness.py</span>`}
  ]},
 
  {name:"介面層",color:C.ui,children:[
    {name:"REST API",color:C.ui,leaf:true,detail:`<code>api/server.py</code>（FastAPI，MVP 無狀態每請求重算）：<code>/health /datasets /analyze /fwer /softsensor /timeline /yhealth /yhealth_index /series /contribution</code>；<b>/baseline · /crossval 未實作</b>（誠實標）。<span class="path">api/server.py · schemas.py</span>`},
    {name:"前端",color:C.ui,leaf:true,detail:`Dash：<code>frontend/demo_app.py</code>(:8051 主 demo)、<code>frontend/app.py</code>(:8050 工程師儀表)。<b>關鍵不變式：UI 殼只呼叫邏輯核心 <code>deploy/demo.py</code>（回傳可序列化 dict、可單元測試），不在 UI 寫邏輯。</b> 精靈：選源+特徵子集→golden→測試+窗長→建模驗收→完成。`},
    {name:"段分析",color:C.ui,leaf:true,detail:`<b>可解釋視圖（advisory＝非告警，與告警隔離防誤用）。</b> 段定義（trim/ssd/wavelet）+ [參數×統計] block-bootstrap 偏離排序（Holm 校正、三態、橙 banner）。主訊號仍是 L2 SPE，此頁不做告警決策。`},
-   {name:"事件/總覽",color:C.ui,leaf:true,detail:`事件頁（認領/關閉/MTTR/ROI/「N 層一致」）、全廠總覽三態燈（健康/告警/待建模）、製程歷史稽核（版本、驗收快照、軟刪除還原）。`}
+   {name:"事件/總覽",color:C.ui,leaf:true,detail:`事件頁（認領/關閉/MTTR/ROI/「N 層一致」）、全廠總覽三態燈（健康/告警/待建模）、製程歷史稽核（版本、驗收快照、軟刪除還原）。`},
+   {name:"多產線總覽(北極星)",color:C.ui,leaf:true,detail:`<b>一屏看全部產線健康 → 點產線就地展開三部分</b>：①線上即時記錄（逐窗健康折線，依告警上色）②告警歷史（每筆<b>下鑽到偏移的 X 參數或 Y 量測</b>）③模型建立資訊（版本/驗收快照/稽核）。<b>現行語意（使用者拍板）</b>：一條產線＝一個既有監控點(process/dataset)，per-line 健康沿用既有三態燈、零資料層改動；<b>真逐 machine_id rollup 列後續 backlog</b>。即時記錄先用離線逐窗結果，待 headless runner 接真 live 流。<span class="path">frontend/fleet.py</span>`},
+   {name:"batch-AVM 9步精靈",color:C.ui,leaf:true,detail:`挑製程+時間 → 顯示有資料的機台 → 挑參數 → <b>修剪 Temporal（疊圖）</b> → <b>轉 Indicator（[參數×統計]，惰性計算+進度%）</b> → DQIx/DQIy → 建映射模型 → 選測試區間 → 顯示 GSI/可信度/隱性飄移（粗→細可下鑽到批細節與 G2/G3 歸因）。<span class="path">frontend/batch_wizard.py</span>`}
  ]},
 
  {name:"上手/執行",color:C.pre,children:[
@@ -178,7 +207,7 @@ const TREE={name:"健康度偵測系統",root:true,color:"var(--c1)",children:[
    {name:"單一 config",color:C.det,leaf:true,detail:`<code>config.py</code>：所有超參集中於單一 frozen dataclass（單一真相）；正式跑須以 TEP 掃描值覆寫並版本化。<span class="path">src/health_index/config.py</span>`},
    {name:"高維穩健",color:C.det,leaf:true,detail:`<code>highdim.py</code>：p≫n 時 MinCovDet 會靜默回奇異協方差（Rule 12 紅線）→ L1/L4 以 effective_rank/預降維截斷近零 noise 方向，避免靜默失敗。<span class="path">detectors/highdim.py</span>`},
    {name:"審核獨立性",color:C.det,leaf:true,detail:`架構/schema/自審承載結論禁自審終局 → 派 ≥2 獨立子代理紅隊「重推、audit-the-audit」；衝突擇一不平均（Rule 7）；文獻以 <code>docs/literature_crossref.md</code> 為唯一真相、查不到標 NOT FOUND（Rule 12）。`},
-   {name:"範圍與現況",color:C.det,leaf:true,detail:`<b>給長官判斷投資階段/風險的成熟度。</b> 已驗證：TEP/CCPP/Steel/synthetic 上五維鏈跑通、439 測試綠。<b>目前限制</b>：維修型 re-entry 未實作、現場 PISource 為待接入 stub、真實 ROI 待上線回填、L5 DTW 僅批次。`}
+   {name:"範圍與現況",color:C.det,leaf:true,detail:`<b>給長官判斷投資階段/風險的成熟度（2026-07）。</b> <b>已驗證</b>：TEP/CCPP/Steel/synthetic 上五維鏈跑通；batch-AVM 路徑（X*→Ŷ、CV+、G3 適用域、G1/G2 監控與歸因、同質性閘、runner、生命週期、AR 白化）全數 TDD 綠；<b>569 測試綠</b>。<br><b>目前限制（誠實標）</b>：<ul><li><b>SMTP 未串接</b>（通知只產生 payload）；每目標<b>驗收指標與誤報率未定</b>、跨線多重比較未做</li><li>多產線總覽現為「監控點」語意，<b>真逐 machine_id rollup 未做</b>；即時記錄為離線逐窗、未接真 live 流</li><li>批次生命週期的 10min/2h 相位用<b>部分批 X*</b>，門檻未嚴格校準（早期預警非已校準告警）</li><li>維修型 re-entry 未實作、現場 PISource 為 stub、真實 ROI 待上線回填、L5 DTW 僅批次</li><li>batch-AVM 端到端<b>尚未在 TEP 實測</b>（資料在，屬待跑非資料限制）；UI 互動渲染未在本環境驗證</li></ul>`}
  ]}
 ]};
 
