@@ -12,7 +12,9 @@
   而非真漂移 → **不納入監控**（計數揭露 ``n_off_domain``，改查 X 側/G3）。
 - **不對殘差差分**（Kaneko&Funatsu Time-Difference 會抵消漂移——差分正是本監控的反面）。
 - 未量測（y=NaN）≠ 正常：位置保留、不評。
-自相關校正（ARIMA 白化）依使用者定調隨驗收指標階段——批級殘差相依性弱於逐時刻，Rule 2 先簡。
+- **自相關白化（`whiten.py`，backlog #10）**：CUSUM/EWMA 的界假設獨立觀測；殘差正自相關會膨脹誤報。
+  fit 時以 Ljung-Box 檢定 golden 殘差，**顯著才**套 AR(p) 白化（監控 innovations），不顯著則 identity
+  （不對沒壞的東西轉換、不白丟前 p 點）。實作為 AR 子集而非完整 ARIMA，理由見 `whiten.py` docstring。
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import numpy as np
 
 from ..config import DEFAULT, Config
 from ..y_history import YHistoryMonitor
+from .whiten import ARWhitener, fit_whitener, whiten
 
 
 @dataclass
@@ -31,6 +34,7 @@ class ResidualDriftMonitor:
 
     monitor: YHistoryMonitor
     null_kind: str  # 'cv_oof'（CV+ out-of-fold 有號殘差）| 'in_sample'（偏窄，誠實降級）
+    whitener: ARWhitener | None = None  # AR 白化器（applied=False ⇒ identity，殘差本已近 iid）
 
 
 def fit_residual_monitor(model, Xstar_golden, y_golden, *, config: Config = DEFAULT) -> ResidualDriftMonitor:
@@ -53,7 +57,15 @@ def fit_residual_monitor(model, Xstar_golden, y_golden, *, config: Config = DEFA
     else:  # 誠實降級：in-sample 殘差偏窄（null 過緊 → 誤報偏高），null_kind 揭露
         pred = np.asarray(model.ss_.predict(Xk[ok]), dtype=float).ravel()
         e_g, null_kind = y[ok] - pred, "in_sample"
-    return ResidualDriftMonitor(monitor=YHistoryMonitor(config).fit(e_g), null_kind=null_kind)
+    try:  # 自相關白化（#10）：顯著才套用；樣本不足以檢定則誠實不白化
+        w = fit_whitener(e_g, config=config)
+    except ValueError:
+        w = ARWhitener(order=0, phi=np.zeros(0), lb_p_before=float("nan"), lb_p_after=None,
+                       applied=False, note="樣本不足以檢定自相關 → 不白化（誠實不假評）")
+    e_fit = whiten(w, e_g)
+    e_fit = e_fit[np.isfinite(e_fit)]  # 白化丟失前 p 點
+    return ResidualDriftMonitor(monitor=YHistoryMonitor(config).fit(e_fit), null_kind=null_kind,
+                                whitener=w)
 
 
 def score_residuals(rm: ResidualDriftMonitor, model, Xstar, y) -> dict:
@@ -74,7 +86,8 @@ def score_residuals(rm: ResidualDriftMonitor, model, Xstar, y) -> dict:
     if use.any():
         pred = np.asarray(model.ss_.predict(Xk[use]), dtype=float).ravel()
         e[use] = yq[use] - pred
-    res = rm.monitor.score(e)
+    w = rm.whitener
+    res = rm.monitor.score(whiten(w, e) if w is not None else e)  # 白化後監控 innovations（#10）
     for i, p in enumerate(res["points"]):
         p["off_domain"] = bool(off[i])
     s = res["summary"]
@@ -84,4 +97,6 @@ def score_residuals(rm: ResidualDriftMonitor, model, Xstar, y) -> dict:
                   else "殘差 vs 歷史未偵測到偏移（映射完好）") + extra)
     res["channel"] = "residual(G2)"
     res["null_kind"] = rm.null_kind
+    res["whitening"] = ({"applied": w.applied, "order": w.order, "lb_p_before": w.lb_p_before,
+                         "lb_p_after": w.lb_p_after, "note": w.note} if w is not None else None)
     return res
